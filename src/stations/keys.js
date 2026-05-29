@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Station } from './base.js';
 import { Spring } from '../spring.js';
 import { Stage } from '../stage.js';
+import { rbox } from '../util.js';
 
 // 08 — Keys. Mechanical keycaps + a digital display. Switch feel per key:
 // linear (no bump), tactile (bump partway), clicky (sharp click). The sound +
@@ -24,7 +25,7 @@ export class KeysStation extends Station {
   build() {
     this.text = '';
     const caseMat = new THREE.MeshPhysicalMaterial({ color: 0x23262d, roughness: 0.5, metalness: 0.2 });
-    const board = new THREE.Mesh(new THREE.BoxGeometry(KEYS.length * 0.62 + 0.4, 0.3, 1.0), caseMat);
+    const board = new THREE.Mesh(rbox(KEYS.length * 0.62 + 0.4, 0.34, 1.0, 0.08), caseMat);
     board.position.set(0, 0.45, 0); board.castShadow = board.receiveShadow = true;
     this.group.add(board);
 
@@ -61,7 +62,7 @@ export class KeysStation extends Station {
     const panel = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 0.7), this.screen.material);
     panel.position.set(0, 1.7, -0.3);
     this.group.add(panel);
-    const bezel = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.9, 0.1), caseMat);
+    const bezel = new THREE.Mesh(rbox(2.6, 0.9, 0.12, 0.05), caseMat);
     bezel.position.set(0, 1.7, -0.36); this.group.add(bezel);
 
     this.group.add(Stage.contactShadow(KEYS.length * 0.4, 0.45));

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Station } from './base.js';
 import { Spring } from '../spring.js';
 import { Stage } from '../stage.js';
+import { rbox } from '../util.js';
 
 // 05 — Flip. A row of wall-style toggle switches with snap-action. Tap = quick
 // flip; drag the lever and it resists, then snaps past center — the event (a
@@ -22,7 +23,7 @@ export class FlipStation extends Station {
     const plateMat = new THREE.MeshPhysicalMaterial({ color: 0xeceef1, roughness: 0.5 });
     const leverMat = new THREE.MeshPhysicalMaterial({ color: 0x33363d, roughness: 0.35, metalness: 0.3 });
 
-    const plate = new THREE.Mesh(new THREE.BoxGeometry(COUNT * 0.95 + 0.4, 1.7, 0.25), plateMat);
+    const plate = new THREE.Mesh(rbox(COUNT * 0.95 + 0.4, 1.7, 0.28, 0.1), plateMat);
     plate.position.y = 0.95; plate.castShadow = plate.receiveShadow = true;
     this.group.add(plate);
 
@@ -42,10 +43,10 @@ export class FlipStation extends Station {
       const knob = new THREE.Mesh(new THREE.SphereGeometry(0.14, 24, 16), leverMat);
       knob.position.y = 0.62; knob.userData.idx = i; pivot.add(knob);
 
-      // Indicator LED below each switch.
-      const ledMat = new THREE.MeshStandardMaterial({ color: 0x224, emissive: 0x6ea8fe, emissiveIntensity: 0.1 });
-      const led = new THREE.Mesh(new THREE.CircleGeometry(0.07, 20), ledMat);
-      led.position.set(x, 0.4, 0.14);
+      // Indicator LED below each switch — a small glass dome.
+      const ledMat = new THREE.MeshStandardMaterial({ color: 0x202634, emissive: 0x6ea8fe, emissiveIntensity: 0.1, roughness: 0.25 });
+      const led = new THREE.Mesh(new THREE.SphereGeometry(0.075, 20, 14), ledMat);
+      led.position.set(x, 0.4, 0.16);
       this.group.add(led);
 
       const spring = new Spring(320, 18, this.state[i] ? ANGLE : -ANGLE);

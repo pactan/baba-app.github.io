@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Station } from './base.js';
 import { Spring } from '../spring.js';
 import { Stage } from '../stage.js';
+import { rbox } from '../util.js';
 
 // 01 — Pop. A 5x5 silicone bubble grid standing up to face you. Tap a bubble to
 // pop it through to a concave dimple; tap again pops it back. Drag across bubbles
@@ -25,8 +26,8 @@ export class PopStation extends Station {
     // Backing panel behind the bubbles.
     const span = (N - 1) * GAP + 0.7;
     const plate = new THREE.Mesh(
-      new THREE.BoxGeometry(span, span, 0.2),
-      new THREE.MeshPhysicalMaterial({ color: 0xd23b42, roughness: 0.6 })
+      rbox(span, span, 0.24, 0.12),
+      new THREE.MeshPhysicalMaterial({ color: 0xd23b42, roughness: 0.55, clearcoat: 0.3 })
     );
     plate.position.set(0, CY, -0.14);
     plate.receiveShadow = true;

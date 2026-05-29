@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Station } from './base.js';
 import { Spring } from '../spring.js';
 import { Stage } from '../stage.js';
+import { rbox } from '../util.js';
 
 // 07 — Ratchet (the hero). A socket wrench tightening a hex bolt.
 //   Clockwise = ENGAGED: socket grips, bolt turns with the wrench, torque builds,
@@ -41,7 +42,7 @@ export class RatchetStation extends Station {
     this.boltMat = boltMat;
 
     // Work-plate the bolt threads into.
-    const plate = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.0, 0.4),
+    const plate = new THREE.Mesh(rbox(3.2, 2.0, 0.4, 0.14),
       new THREE.MeshPhysicalMaterial({ color: 0x2c2f36, roughness: 0.7, metalness: 0.4 }));
     plate.position.set(0, 1.0, -0.2); plate.receiveShadow = true; plate.castShadow = true;
     this.group.add(plate);
@@ -70,9 +71,10 @@ export class RatchetStation extends Station {
 
     // Analog torque gauge (top-left).
     this.gaugeSpan = Math.PI * 1.2;
-    const dial = new THREE.Mesh(new THREE.CircleGeometry(0.5, 48),
-      new THREE.MeshStandardMaterial({ color: 0x12141a }));
-    dial.position.set(-1.9, 2.1, 0.1); this.group.add(dial);
+    const dial = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.08, 48),
+      new THREE.MeshStandardMaterial({ color: 0x12141a, roughness: 0.6 }));
+    dial.rotation.x = Math.PI / 2;
+    dial.position.set(-1.9, 2.1, 0.08); this.group.add(dial);
     const rim = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.04, 12, 48), steel);
     rim.position.copy(dial.position); this.group.add(rim);
     this.needle = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.025, 0.02),

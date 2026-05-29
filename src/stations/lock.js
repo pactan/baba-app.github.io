@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Station } from './base.js';
 import { Stage } from '../stage.js';
+import { rbox } from '../util.js';
 
 // 09 — Lock. A 3-drum combination padlock. Each drum clicks per number with a
 // detent and momentum — a flick spins through several numbers and settles.
@@ -26,7 +27,7 @@ export class LockStation extends Station {
     const drumMat = new THREE.MeshPhysicalMaterial({ color: 0x3a3d44, roughness: 0.4, metalness: 0.8 });
 
     // Padlock body.
-    const shell = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.5, 0.7), body);
+    const shell = new THREE.Mesh(rbox(2.4, 1.5, 0.7, 0.16), body);
     shell.position.set(0, 0.95, 0); shell.castShadow = shell.receiveShadow = true;
     this.group.add(shell);
 

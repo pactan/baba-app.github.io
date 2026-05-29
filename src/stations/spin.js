@@ -37,18 +37,24 @@ export class SpinStation extends Station {
     const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.16, 40), body);
     hub.rotation.x = Math.PI / 2; hub.castShadow = true;
     this.spinner.add(hub);
-    const bearing = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.2, 32), metal);
+    const rimMat = new THREE.MeshPhysicalMaterial({ color: 0x32353c, roughness: 0.35, metalness: 0.95 });
+    const bearing = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.22, 32), metal);
     bearing.rotation.x = Math.PI / 2;
     this.spinner.add(bearing);
+    const bearingRim = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.04, 14, 32), rimMat);
+    this.spinner.add(bearingRim); // sits in the XY plane, faces the camera
 
     for (let i = 0; i < 3; i++) {
       const arm = new THREE.Group();
       arm.rotation.z = (i / 3) * Math.PI * 2;
-      const neck = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.6, 0.14), body);
+      const neck = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.6, 0.16), body);
       neck.position.y = 0.42; neck.castShadow = true;
-      const weight = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.18, 36), metal);
+      const weight = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.2, 36), metal);
       weight.rotation.x = Math.PI / 2; weight.position.y = 0.78; weight.castShadow = true;
-      arm.add(neck); arm.add(weight);
+      // dark rim => reads as a solid wheel, not a flat disc
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.055, 16, 36), rimMat);
+      rim.position.y = 0.78; rim.castShadow = true;
+      arm.add(neck); arm.add(weight); arm.add(rim);
       this.spinner.add(arm);
     }
 

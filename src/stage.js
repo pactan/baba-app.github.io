@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const SPACING = 9; // world units between stations along X (kept clear of fit zoom-out)
-const TILT = 0.5;  // how far above the look point the camera sits
+const DEF_EL = 0.16; // default camera elevation (radians above the look point)
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 // Holds the single renderer/scene/camera, lays stations out along X, pans the
 // camera between them, and routes pointer gestures: a press that hits the
@@ -26,13 +27,15 @@ export class Stage {
     this.scene.background = new THREE.Color(0x0c0d11);
 
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
-    // Camera always sits directly in front of the current station and looks
-    // straight at it (small downward tilt only, so contact shadows still read
-    // and the front-facing rotation gestures stay accurate).
+    // The camera orbits the current station on a sphere (azimuth/elevation),
+    // at a fitted distance. Two-finger drag rotates it; pinch zooms; paging
+    // re-centers to the front. One finger is left for interaction / swiping.
     this.lookY = 1.0; this.lookYTarget = 1.0;
     this.camX = 0; this.camTargetX = 0;
     this.dist = 8; this.distTarget = 8;
-    this.camera.position.set(0, this.lookY + TILT, this.dist);
+    this.az = 0; this.azTarget = 0;            // 0 = front
+    this.el = DEF_EL; this.elTarget = DEF_EL;  // elevation above the look point
+    this.zoom = 1; this.zoomTarget = 1;        // pinch multiplier on distance
 
     this._setupEnv();
     this._setupLights();
@@ -112,9 +115,14 @@ export class Stage {
       this.stations[this.current]?.onEnter?.();
     }
     this.camTargetX = this.current * SPACING;
+    // Re-center the view on each toy (front, default elevation, no zoom).
+    this.azTarget = 0; this.elTarget = DEF_EL; this.zoomTarget = 1;
+    this.stations.forEach((s, k) => { s.isCurrent = (k === this.current); });
     this._applyFrame();
     this.ctx.onPageChange?.(this.current, this.stations[this.current]);
   }
+
+  resetView() { this.azTarget = 0; this.elTarget = DEF_EL; this.zoomTarget = 1; }
 
   next() { this.goTo(this.current + 1); }
   prev() { this.goTo(this.current - 1); }
@@ -163,30 +171,64 @@ export class Stage {
   }
 
   _bindPointer(canvas) {
-    let mode = null;       // 'station' | 'page'
+    const ptrs = new Map();      // pointerId -> {x, y}
+    let mode = null;             // 'station' | 'page' | 'orbit'
+    let gId = null;              // the pointer that owns a single-finger gesture
     let startX = 0, startY = 0, swiped = false;
+    let orbCx = 0, orbCy = 0, orbDist = 0;
+
+    const centroid = () => {
+      let x = 0, y = 0; for (const p of ptrs.values()) { x += p.x; y += p.y; }
+      const n = ptrs.size || 1; return { x: x / n, y: y / n };
+    };
+    const spread = () => {
+      const a = [...ptrs.values()]; if (a.length < 2) return 0;
+      return Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
+    };
 
     canvas.addEventListener('pointerdown', (e) => {
       canvas.setPointerCapture?.(e.pointerId);
+      ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (ptrs.size >= 2) {
+        // Second finger down => orbit. Abandon any single-finger gesture.
+        if (mode === 'station') this.stations[this.current].onUp?.(this.pointer.clone());
+        mode = 'orbit'; gId = null;
+        const c = centroid(); orbCx = c.x; orbCy = c.y; orbDist = spread();
+        return;
+      }
+
       this._updatePointer(e);
       const hit = this._pick();
       const s = this.stations[this.current];
       if (hit && s.onDown) {
-        mode = 'station';
+        mode = 'station'; gId = e.pointerId;
         s.onDown(hit, this.pointer.clone());
       } else {
-        mode = 'page';
+        mode = 'page'; gId = e.pointerId;
         startX = e.clientX; startY = e.clientY; swiped = false;
       }
     });
 
     canvas.addEventListener('pointermove', (e) => {
-      if (!mode) return;
+      if (!ptrs.has(e.pointerId)) return;
+      ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (mode === 'orbit' && ptrs.size >= 2) {
+        const c = centroid();
+        this.azTarget -= (c.x - orbCx) * 0.006;
+        this.elTarget = clamp(this.elTarget - (c.y - orbCy) * 0.006, -0.25, 1.35);
+        orbCx = c.x; orbCy = c.y;
+        const sp = spread();
+        if (orbDist > 0 && sp > 0) this.zoomTarget = clamp(this.zoomTarget * (orbDist / sp), 0.55, 1.8);
+        orbDist = sp;
+        return;
+      }
+      if (e.pointerId !== gId) return;
       this._updatePointer(e);
-      const s = this.stations[this.current];
       if (mode === 'station') {
-        s.onMove?.(this._pick(), this.pointer.clone());
-      } else if (!swiped) {
+        this.stations[this.current].onMove?.(this._pick(), this.pointer.clone());
+      } else if (mode === 'page' && !swiped) {
         const dx = e.clientX - startX, dy = e.clientY - startY;
         if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy)) {
           swiped = true;
@@ -197,8 +239,16 @@ export class Stage {
     });
 
     const end = (e) => {
-      if (mode === 'station') this.stations[this.current].onUp?.(this.pointer.clone());
-      mode = null;
+      ptrs.delete(e.pointerId);
+      if (mode === 'station' && e.pointerId === gId) {
+        this.stations[this.current].onUp?.(this.pointer.clone());
+      }
+      if (mode === 'orbit') {
+        // Wait until all fingers lift before allowing a new gesture.
+        if (ptrs.size === 0) { mode = null; gId = null; }
+      } else if (e.pointerId === gId) {
+        mode = null; gId = null;
+      }
     };
     canvas.addEventListener('pointerup', end);
     canvas.addEventListener('pointercancel', end);
@@ -206,6 +256,8 @@ export class Stage {
     window.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowRight') this.next();
       if (e.key === 'ArrowLeft') this.prev();
+      if (e.key === 'ArrowUp') this.azTarget += 0.3;
+      if (e.key === 'ArrowDown') this.azTarget -= 0.3;
     });
   }
 
@@ -215,18 +267,29 @@ export class Stage {
     this.camX = this.camTargetX;
     this.dist = this.distTarget;
     this.lookY = this.lookYTarget;
+    this.stations.forEach((s, k) => { s.isCurrent = (k === this.current); });
 
     const loop = () => {
       requestAnimationFrame(loop);
       const dt = this.clock.getDelta();
       const t = this.clock.elapsedTime;
 
-      // Smooth pan + zoom toward the current station's frame.
+      // Smooth pan + zoom + orbit toward their targets.
       const k = Math.min(1, dt * 7);
       this.camX += (this.camTargetX - this.camX) * k;
       this.dist += (this.distTarget - this.dist) * k;
       this.lookY += (this.lookYTarget - this.lookY) * k;
-      this.camera.position.set(this.camX, this.lookY + TILT, this.dist);
+      this.az += (this.azTarget - this.az) * k;
+      this.el += (this.elTarget - this.el) * k;
+      this.zoom += (this.zoomTarget - this.zoom) * k;
+
+      const d = this.dist * this.zoom;
+      const ce = Math.cos(this.el);
+      this.camera.position.set(
+        this.camX + d * Math.sin(this.az) * ce,
+        this.lookY + d * Math.sin(this.el),
+        d * Math.cos(this.az) * ce
+      );
       this.camera.lookAt(this.camX, this.lookY, 0);
 
       // Keep the key light + shadow frustum over the active station.
