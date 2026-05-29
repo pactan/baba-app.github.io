@@ -1,0 +1,173 @@
+import * as THREE from 'three';
+import { Station } from './base.js';
+import { Spring } from '../spring.js';
+import { Stage } from '../stage.js';
+
+// 01 — Pop. A 5x5 silicone bubble grid. Tap a bubble to pop it through to a
+// concave dimple; tap again pops it back. Drag across bubbles to sweep-pop a
+// run with a rising pitch ladder. Tap-hold anywhere resets with a cascade.
+const N = 5;
+const GAP = 0.42;
+
+export class PopStation extends Station {
+  get title() { return 'Pop'; }
+  get index() { return '01'; }
+
+  build() {
+    this.count = this.load('pop.count', 0);
+
+    const silicone = new THREE.MeshPhysicalMaterial({
+      color: 0xe7484f, roughness: 0.5, clearcoat: 0.5, clearcoatRoughness: 0.5, sheen: 0.6, sheenColor: 0xff8a8f,
+    });
+    this.mat = silicone;
+
+    // Backing plate.
+    const span = (N - 1) * GAP + 0.7;
+    const plate = new THREE.Mesh(
+      new THREE.BoxGeometry(span, 0.18, span),
+      new THREE.MeshPhysicalMaterial({ color: 0xd23b42, roughness: 0.6 })
+    );
+    plate.position.y = 0.09;
+    plate.receiveShadow = true;
+    plate.castShadow = true;
+    this.group.add(plate);
+
+    this.bubbles = [];
+    this.interactive = [];
+    const half = (N - 1) / 2;
+    const geo = new THREE.SphereGeometry(0.2, 28, 18, 0, Math.PI * 2, 0, Math.PI / 2);
+
+    for (let r = 0; r < N; r++) {
+      for (let c = 0; c < N; c++) {
+        const m = new THREE.Mesh(geo, silicone);
+        m.castShadow = true;
+        m.position.set((c - half) * GAP, 0.18, (r - half) * GAP);
+        m.userData = {
+          spring: new Spring(220, 16, 0), // 0 = domed up, 1 = popped through (dimple)
+          popped: false,
+          baseY: 0.18,
+          pitch: 1 + ((N - 1 - r) * N + c) * 0.02, // sweep pitch ladder
+        };
+        this.group.add(m);
+        this.bubbles.push(m);
+        this.interactive.push(m);
+      }
+    }
+
+    this.group.add(Stage.contactShadow(span * 0.75, 0.5));
+
+    this.ripples = new RipplePool(this.group, 6);
+    this.holdTimer = null;
+    this.sweptThisGesture = new Set();
+    this.dragging = false;
+  }
+
+  _pop(bubble, forceState) {
+    const d = bubble.userData;
+    const popped = forceState == null ? !d.popped : forceState;
+    if (popped === d.popped) return;
+    d.popped = popped;
+    d.spring.set(popped ? 1 : 0);
+
+    if (popped) { this.count++; this.save('pop.count', this.count); this.refreshStat(); }
+
+    const reduced = this.ctx.settings.reducedMotion;
+    this.ctx.feedback.emit({
+      type: popped ? 'pop-in' : 'pop-out',
+      intensity: popped ? 0.9 : 0.6,
+      pitch: (popped ? 1.15 : 0.9) * d.pitch,
+      pan: bubble.position.x / 3,
+      visual: reduced ? null : () => this.ripples.fire(bubble.position),
+    });
+  }
+
+  onDown(hit) {
+    if (!hit) return;
+    this.dragging = true;
+    this.sweptThisGesture.clear();
+    const b = hit.object;
+    this.sweptThisGesture.add(b);
+    this._pop(b);
+
+    this.holdTimer = setTimeout(() => this._resetAll(), 650);
+  }
+
+  onMove(hit) {
+    if (!this.dragging || !hit) return;
+    const b = hit.object;
+    if (this.sweptThisGesture.has(b)) return;
+    this.sweptThisGesture.add(b);
+    clearTimeout(this.holdTimer); // a drag isn't a hold
+    this._pop(b, true); // sweep always pops in
+  }
+
+  onUp() {
+    this.dragging = false;
+    clearTimeout(this.holdTimer);
+  }
+
+  _resetAll() {
+    let i = 0;
+    for (const b of this.bubbles) {
+      if (!b.userData.popped) continue;
+      // Cascade the un-pop for a satisfying wave.
+      setTimeout(() => this._pop(b, false), (i++) * 22);
+    }
+  }
+
+  update(dt) {
+    for (const b of this.bubbles) {
+      const d = b.userData;
+      const v = d.spring.update(dt);
+      // Push the dome down and flip it inside-out as it crosses through.
+      b.position.y = d.baseY - v * 0.16;
+      const s = 1 - v * 2; // crosses zero -> dome inverts to a dimple
+      b.scale.y = Math.abs(s) < 0.04 ? 0.04 : s;
+      // Anticipation: a touch of squash-out right before the snap-through.
+      const bulge = 1 + 0.12 * Math.sin(Math.min(v, 0.5) * Math.PI);
+      b.scale.x = b.scale.z = bulge;
+    }
+    this.ripples.update(dt);
+  }
+
+  info() {
+    return `<span class="num">${this.count}</span>pops`;
+  }
+}
+
+// A tiny pool of expanding/fading rings reused across pops.
+class RipplePool {
+  constructor(parent, n) {
+    this.items = [];
+    const geo = new THREE.RingGeometry(0.16, 0.22, 32);
+    for (let i = 0; i < n; i++) {
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffd0d2, transparent: true, opacity: 0, depthWrite: false });
+      const m = new THREE.Mesh(geo, mat);
+      m.rotation.x = -Math.PI / 2;
+      m.visible = false;
+      parent.add(m);
+      this.items.push({ mesh: m, life: 0 });
+    }
+    this.cursor = 0;
+  }
+
+  fire(pos) {
+    const it = this.items[this.cursor];
+    this.cursor = (this.cursor + 1) % this.items.length;
+    it.mesh.position.set(pos.x, 0.2, pos.z);
+    it.mesh.visible = true;
+    it.life = 1;
+  }
+
+  update(dt) {
+    for (const it of this.items) {
+      if (it.life <= 0) continue;
+      it.life -= dt * 3;
+      const k = 1 - Math.max(0, it.life);
+      const s = 0.6 + k * 2.2;
+      it.mesh.scale.set(s, s, s);
+      it.mesh.material.opacity = Math.max(0, it.life) * 0.7;
+      if (it.life <= 0) it.mesh.visible = false;
+    }
+  }
+}
