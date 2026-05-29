@@ -19,6 +19,7 @@ const DEPTH = 0.18, ACTUATE = 0.45, RESET = 0.3;
 export class KeysStation extends Station {
   get title() { return 'Keys'; }
   get index() { return '08'; }
+  frame() { return { y: 1.05, halfW: 1.8, halfH: 1.25 }; }
 
   build() {
     this.text = '';

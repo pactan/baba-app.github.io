@@ -13,6 +13,7 @@ const ANGLE = 0.6; // lever tilt each way
 export class FlipStation extends Station {
   get title() { return 'Flip'; }
   get index() { return '05'; }
+  frame() { return { y: 0.95, halfW: 2.3, halfH: 1.25 }; }
 
   build() {
     this.state = this.load('flip.state', new Array(COUNT).fill(false));

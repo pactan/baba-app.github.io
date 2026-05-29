@@ -21,6 +21,7 @@ const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 export class RatchetStation extends Station {
   get title() { return 'Ratchet'; }
   get index() { return '07'; }
+  frame() { return { y: 1.0, halfW: 2.7, halfH: 1.6 }; }
 
   build() {
     this.seated = this.load('ratchet.seated', 0);

@@ -14,6 +14,7 @@ const STEP = SPAN / TEETH;
 export class ZipperStation extends Station {
   get title() { return 'Zipper'; }
   get index() { return '11'; }
+  frame() { return { y: 1.1, halfW: 1.2, halfH: 1.15 }; }
 
   build() {
     this.pullY = BOTTOM;     // start fully open
@@ -68,25 +69,20 @@ export class ZipperStation extends Station {
     this.buzz = null;
   }
 
-  _ndcToY(ndc) {
-    // Map the visible vertical band to the track range. Camera looks at y≈0.35,
-    // so use a generous mapping and clamp.
-    return Math.max(BOTTOM, Math.min(TOP, (TOP + BOTTOM) / 2 + ndc.y * 2.0));
-  }
-
   onDown(hit, ndc) {
     this.dragging = true;
     this.vel = 0;
-    this.grabOffset = this.pullY - this._ndcToY(ndc);
+    // Grab from the exact world point under the finger on the track.
+    this.grabOffset = hit ? this.pullY - hit.point.y : 0;
     this.lastT = performance.now() / 1000;
     if (!this.buzz) this.buzz = this.ctx.feedback.sound.noiseTone({ freq: 2200, q: 1.5, gain: 0 });
   }
 
   onMove(hit, ndc) {
-    if (!this.dragging) return;
+    if (!this.dragging || !hit) return;
     const now = performance.now() / 1000;
     const dt = Math.max(1 / 240, now - this.lastT);
-    const ny = Math.max(BOTTOM, Math.min(TOP, this._ndcToY(ndc) + this.grabOffset));
+    const ny = Math.max(BOTTOM, Math.min(TOP, hit.point.y + this.grabOffset));
     this.vel = (ny - this.pullY) / dt;
     this.pullY = ny;
     this.lastT = now;

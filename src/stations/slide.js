@@ -12,6 +12,7 @@ const STEP = (HALF * 2) / (DETENTS - 1);
 export class SlideStation extends Station {
   get title() { return 'Slide'; }
   get index() { return '04'; }
+  frame() { return { y: 0.65, halfW: 2.3, halfH: 0.9 }; }
 
   build() {
     const metal = new THREE.MeshPhysicalMaterial({ color: 0xd9dde3, roughness: 0.18, metalness: 1.0 });
@@ -58,19 +59,20 @@ export class SlideStation extends Station {
   onDown(hit, ndc) {
     this.dragging = true;
     this.vx = 0;
-    this.grabOffset = this.x - ndc.x * (HALF + 0.4);
-    this.lastNdcX = ndc.x; this.lastT = performance.now() / 1000;
+    // Grab from the exact world point under the finger.
+    this.grabOffset = hit ? this.x - hit.point.x : 0;
+    this.lastT = performance.now() / 1000;
     if (!this.roll) this.roll = this.ctx.feedback.sound.noiseTone({ freq: 320, q: 1.4, gain: 0 });
   }
 
   onMove(hit, ndc) {
-    if (!this.dragging) return;
+    if (!this.dragging || !hit) return;
     const now = performance.now() / 1000;
     const dt = Math.max(1 / 240, now - this.lastT);
-    const nx = Math.max(-HALF, Math.min(HALF, ndc.x * (HALF + 0.4) + this.grabOffset));
+    const nx = Math.max(-HALF, Math.min(HALF, hit.point.x + this.grabOffset));
     this.vx = (nx - this.x) / dt;
     this.x = nx;
-    this.lastNdcX = ndc.x; this.lastT = now;
+    this.lastT = now;
   }
 
   onUp() { this.dragging = false; }

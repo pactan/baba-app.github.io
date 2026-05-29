@@ -13,6 +13,7 @@ const MODES = ['free', 'memory', 'safecracker'];
 export class LockStation extends Station {
   get title() { return 'Lock'; }
   get index() { return '09'; }
+  frame() { return { y: 1.1, halfW: 1.6, halfH: 1.5 }; }
 
   build() {
     this.mode = this.load('lock.mode', 'free');
@@ -45,19 +46,23 @@ export class LockStation extends Station {
     // Three drums with a digit window each.
     this.drums = [];
     this.interactive = [];
+    // Drum geometry baked to lie along X so the dynamic spin is a pure rotation
+    // about the world X axis (a clean roll), not a tumble.
+    const drumGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.5, 40, 1);
+    drumGeo.rotateZ(Math.PI / 2);
     for (let i = 0; i < 3; i++) {
       const x = (i - 1) * 0.62;
-      const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.5, 40, 1), drumMat);
-      cyl.rotation.z = Math.PI / 2;       // axis horizontal (left-right)
+      const cyl = new THREE.Mesh(drumGeo, drumMat);
       cyl.position.set(x, 0.95, 0.36);
       cyl.castShadow = true;
       cyl.userData.idx = i;
-      // knurl ridges
+      // knurl ridges around the X axis (in the Y-Z plane)
       for (let k = 0; k < 24; k++) {
+        const a = (k / 24) * Math.PI * 2;
         const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.02, 0.02), drumMat);
-        ridge.position.y = 0.345 * Math.cos(k / 24 * Math.PI * 2);
-        ridge.position.z = 0.345 * Math.sin(k / 24 * Math.PI * 2);
-        ridge.rotation.x = k / 24 * Math.PI * 2;
+        ridge.position.y = 0.345 * Math.cos(a);
+        ridge.position.z = 0.345 * Math.sin(a);
+        ridge.rotation.x = a;
         cyl.add(ridge);
       }
       this.group.add(cyl);

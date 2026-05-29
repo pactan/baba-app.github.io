@@ -11,6 +11,7 @@ const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 export class GearsStation extends Station {
   get title() { return 'Gears'; }
   get index() { return '10'; }
+  frame() { return { y: 1.05, halfW: 2.3, halfH: 1.25 }; }
 
   build() {
     this.angle = 0;
@@ -77,16 +78,24 @@ export class GearsStation extends Station {
     return g;
   }
 
+  _angleAt(ndc) {
+    // Measure the finger angle around the driver gear's actual screen position
+    // (it isn't at screen-center), so the drag tracks the gear correctly.
+    const p = this.pivotNdc || { x: 0, y: 0 };
+    return Math.atan2(ndc.y - p.y, ndc.x - p.x);
+  }
+
   onDown(hit, ndc) {
     this.dragging = true;
-    this.lastAngle = Math.atan2(ndc.y, ndc.x);
+    this.pivotNdc = this.ctx.project(this.gears[0].mesh.getWorldPosition(new THREE.Vector3()));
+    this.lastAngle = this._angleAt(ndc);
     this.lastT = performance.now() / 1000;
     this.vel = 0;
   }
 
   onMove(hit, ndc) {
     if (!this.dragging) return;
-    const a = Math.atan2(ndc.y, ndc.x);
+    const a = this._angleAt(ndc);
     const now = performance.now() / 1000;
     const dt = Math.max(1 / 240, now - this.lastT);
     const da = wrap(a - this.lastAngle);
