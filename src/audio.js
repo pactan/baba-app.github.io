@@ -30,6 +30,9 @@ const PRESETS = {
   'zip':         { body: [420, 0.020], click: [3600, 0.005], noise: 0.8, gain: 0.45 },
   'die-hit':     { body: [120, 0.08], click: [1600, 0.020], noise: 0.4, gain: 0.8 },
   'boing':       { body: [320, 0.26], click: [700,  0.020], noise: 0.2, gain: 0.7 },
+  // scissors
+  'snip':        { body: [240, 0.06], click: [4200, 0.014], noise: 0.85, gain: 0.8 },
+  'blade':       { body: [320, 0.02], click: [2600, 0.005], noise: 0.5, gain: 0.3 },
 };
 
 export class Sound {

@@ -90,6 +90,11 @@ export class ZipperStation extends Station {
 
   onUp() { this.dragging = false; }
 
+  onLeave() {
+    if (this.buzz) { this.buzz.stop(); this.buzz = null; }
+    this.dragging = false;
+  }
+
   update(dt) {
     if (!this.dragging) {
       this.vel *= Math.pow(0.02, dt);

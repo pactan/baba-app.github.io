@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { Feedback, hapticsSupported } from './feedback.js';
 import { Stage } from './stage.js';
 import { PopStation } from './stations/pop.js';
@@ -11,6 +12,7 @@ import { KeysStation } from './stations/keys.js';
 import { LockStation } from './stations/lock.js';
 import { GearsStation } from './stations/gears.js';
 import { ZipperStation } from './stations/zipper.js';
+import { ScissorsStation } from './stations/scissors.js';
 
 // --- settings (persisted) ---
 const settings = Object.assign(
@@ -30,7 +32,8 @@ function saveSettings() {
 // --- HUD ---
 const el = (id) => document.getElementById(id);
 const hud = {
-  setStat: (html) => { el('stat').innerHTML = html; },
+  _lastStat: null,
+  setStat: (html) => { if (html !== hud._lastStat) { hud._lastStat = html; el('stat').innerHTML = html; } },
   setTitle: (s) => {
     el('station-title').textContent = s.title;
     el('station-index').textContent = s.index;
@@ -56,6 +59,15 @@ const stage = new Stage(el('scene'), ctx);
 // Project a world point to normalized device coords — lets a station measure a
 // rotational gesture around an off-center pivot.
 ctx.project = (vec) => vec.clone().project(stage.camera);
+// Intersect the pointer ray with a world plane z = const, returning the world
+// point. Lets a station drag something onto a chosen depth plane.
+const _ray = new THREE.Raycaster();
+ctx.rayToZ = (ndc, z) => {
+  _ray.setFromCamera(ndc, stage.camera);
+  const o = _ray.ray.origin, d = _ray.ray.direction;
+  const t = (z - o.z) / d.z;
+  return new THREE.Vector3(o.x + d.x * t, o.y + d.y * t, z);
+};
 stage.add(new PopStation(ctx));
 stage.add(new ClickStation(ctx));
 stage.add(new SpinStation(ctx));
@@ -67,6 +79,7 @@ stage.add(new KeysStation(ctx));
 stage.add(new LockStation(ctx));
 stage.add(new GearsStation(ctx));
 stage.add(new ZipperStation(ctx));
+stage.add(new ScissorsStation(ctx));
 
 // nav dots
 const dots = el('dots');

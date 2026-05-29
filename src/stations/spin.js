@@ -110,6 +110,12 @@ export class SpinStation extends Station {
     if (this.scrape) { this.scrape.stop(); this.scrape = null; }
   }
 
+  onLeave() {
+    if (this.whir) { this.whir.stop(); this.whir = null; }
+    if (this.scrape) { this.scrape.stop(); this.scrape = null; }
+    this.dragging = false;
+  }
+
   update(dt, t) {
     if (!this.dragging) {
       // Bearing friction: small constant term + drag proportional to speed.

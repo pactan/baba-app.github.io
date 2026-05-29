@@ -23,6 +23,11 @@ export class Station {
   build() {}
   update(dt, t) {}
 
+  // Lifecycle: called when this station becomes / stops being the current one.
+  // Used to free continuous audio voices etc.
+  onEnter() {}
+  onLeave() {}
+
   // Pointer hooks. `hit` is the THREE intersection (or null), `ndc` the
   // normalized pointer coords.
   onDown(hit, ndc) {}

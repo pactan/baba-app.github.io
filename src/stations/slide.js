@@ -77,6 +77,11 @@ export class SlideStation extends Station {
 
   onUp() { this.dragging = false; }
 
+  onLeave() {
+    if (this.roll) { this.roll.stop(); this.roll = null; }
+    this.dragging = false;
+  }
+
   update(dt) {
     if (!this.dragging) {
       // Friction glide.
