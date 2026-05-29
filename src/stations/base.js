@@ -8,6 +8,7 @@ export class Station {
     this.ctx = ctx;
     this.group = new THREE.Group();
     this.interactive = []; // meshes the raycaster tests for this station
+    this.isCurrent = false; // set by the Stage; only the current station owns the HUD
   }
 
   get title() { return 'Fidget'; }
@@ -45,5 +46,7 @@ export class Station {
     try { localStorage.setItem('fidget.' + key, JSON.stringify(value)); } catch {}
   }
 
-  refreshStat() { this.ctx.hud?.setStat(this.info()); }
+  // Only the current station may write the HUD — adjacent stations still run
+  // update() for their animation, but must not clobber the active toy's stat.
+  refreshStat() { if (this.isCurrent) this.ctx.hud?.setStat(this.info()); }
 }
