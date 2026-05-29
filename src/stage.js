@@ -21,10 +21,10 @@ export class Stage {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.15;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0c0d11);
+    this.scene.background = Stage._backdrop(); // soft studio gradient behind the toy
 
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
     // The camera orbits the current station on a sphere (azimuth/elevation),
@@ -56,8 +56,8 @@ export class Stage {
   }
 
   _setupLights() {
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x20232c, 0.35));
-    const key = new THREE.DirectionalLight(0xffffff, 2.2);
+    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x16181d, 0.45));
+    const key = new THREE.DirectionalLight(0xffffff, 1.7);
     key.position.set(3, 6, 4);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
@@ -66,14 +66,33 @@ export class Stage {
     const d = 4.5; // tight frustum around one station => crisper shadows + cheaper
     Object.assign(key.shadow.camera, { left: -d, right: d, top: d, bottom: -d });
     key.shadow.bias = -0.0004;
-    key.shadow.radius = 4;
+    key.shadow.radius = 7; // soft, diffuse studio shadow
     this.scene.add(key);
     this.scene.add(key.target); // so the shadow frustum can follow the active station
     this.key = key;
 
-    const fill = new THREE.DirectionalLight(0x88aaff, 0.5);
-    fill.position.set(-4, 2, 2);
+    const fill = new THREE.DirectionalLight(0xbfd4ff, 0.6);
+    fill.position.set(-4, 2.5, 3);
     this.scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.7);
+    rim.position.set(0, 3, -5); // back rim for a clean product-render edge
+    this.scene.add(rim);
+  }
+
+  // A subtle radial studio gradient used as the scene background.
+  static _backdrop() {
+    const cv = document.createElement('canvas');
+    cv.width = 64; cv.height = 128;
+    const g = cv.getContext('2d');
+    const grad = g.createRadialGradient(32, 46, 8, 32, 70, 110);
+    grad.addColorStop(0, '#1b1e26');
+    grad.addColorStop(0.55, '#0c0e12');
+    grad.addColorStop(1, '#050609');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 64, 128);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
   }
 
   // Soft radial AO blob under an object — grounds it far better than the shadow

@@ -103,8 +103,11 @@ overlay.addEventListener('pointerdown', start, { once: true });
 
 // --- settings panel ---
 const panel = el('settings');
-el('settings-btn').addEventListener('click', () => panel.classList.remove('hidden'));
-el('settings-close').addEventListener('click', () => panel.classList.add('hidden'));
+const openSettings = () => panel.classList.remove('hidden');
+const closeSettings = () => panel.classList.add('hidden');
+el('settings-btn').addEventListener('click', openSettings);
+el('settings-close').addEventListener('click', closeSettings);
+panel.addEventListener('click', (e) => { if (e.target === panel) closeSettings(); }); // tap backdrop to dismiss
 
 const vol = el('set-volume');
 vol.value = settings.volume;
