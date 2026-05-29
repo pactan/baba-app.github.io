@@ -81,6 +81,14 @@ export class SquishStation extends Station {
     const depth = this.depth.update(dt);
     const sy = this.squash.update(dt);
 
+    // Skip the (expensive) vertex rebuild once everything has settled.
+    const active = this.pressing || !this.depth.atRest || !this.squash.atRest;
+    if (!active && !this._dirty) {
+      this.mat.emissiveIntensity += (0.05 - this.mat.emissiveIntensity) * Math.min(1, dt * 6);
+      return;
+    }
+    this._dirty = active; // one clean restore pass after coming to rest
+
     // Rebuild the surface: push vertices near the dimple inward with a gaussian falloff.
     const pos = this.geo.attributes.position.array;
     const b = this.base;
@@ -101,6 +109,11 @@ export class SquishStation extends Station {
     // Volume-preserving squash + subsurface glow under pressure.
     this.blob.scale.set(1 / Math.sqrt(Math.max(0.2, sy)), Math.max(0.2, sy), 1 / Math.sqrt(Math.max(0.2, sy)));
     this.mat.emissiveIntensity = 0.05 + Math.max(0, depth) * 1.1;
+  }
+
+  onLeave() {
+    if (this.squishSnd) { this.squishSnd.setGain(0); this.squishSnd.stop(); this.squishSnd = null; }
+    this.pressing = false;
   }
 
   info() { return `squish`; }

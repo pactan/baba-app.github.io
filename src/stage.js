@@ -60,11 +60,12 @@ export class Stage {
     key.shadow.mapSize.set(2048, 2048);
     key.shadow.camera.near = 1;
     key.shadow.camera.far = 30;
-    const d = 8;
+    const d = 4.5; // tight frustum around one station => crisper shadows + cheaper
     Object.assign(key.shadow.camera, { left: -d, right: d, top: d, bottom: -d });
     key.shadow.bias = -0.0004;
     key.shadow.radius = 4;
     this.scene.add(key);
+    this.scene.add(key.target); // so the shadow frustum can follow the active station
     this.key = key;
 
     const fill = new THREE.DirectionalLight(0x88aaff, 0.5);
@@ -104,7 +105,12 @@ export class Stage {
   }
 
   goTo(i) {
+    const prev = this.current;
     this.current = Math.max(0, Math.min(this.stations.length - 1, i));
+    if (prev !== this.current) {
+      this.stations[prev]?.onLeave?.();
+      this.stations[this.current]?.onEnter?.();
+    }
     this.camTargetX = this.current * SPACING;
     this._applyFrame();
     this.ctx.onPageChange?.(this.current, this.stations[this.current]);
@@ -222,6 +228,11 @@ export class Stage {
       this.lookY += (this.lookYTarget - this.lookY) * k;
       this.camera.position.set(this.camX, this.lookY + TILT, this.dist);
       this.camera.lookAt(this.camX, this.lookY, 0);
+
+      // Keep the key light + shadow frustum over the active station.
+      this.key.position.set(this.camX + 3, 6, 4);
+      this.key.target.position.set(this.camX, 0.9, 0);
+      this.key.target.updateMatrixWorld();
 
       this.stations.forEach((s, i) => {
         const near = Math.abs(i - this.current) <= 1;
