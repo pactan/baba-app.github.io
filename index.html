@@ -1,39 +1,65 @@
 <!DOCTYPE html>
-<html lang="ro">
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fidget Toys - Test</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: system-ui, -apple-system, sans-serif;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: #fff;
-            text-align: center;
-            padding: 20px;
-        }
-        h1 { font-size: 2.5rem; margin-bottom: 1rem; }
-        p { font-size: 1.2rem; opacity: 0.9; max-width: 500px; }
-        .badge {
-            margin-top: 2rem;
-            background: rgba(255,255,255,0.2);
-            padding: 10px 20px;
-            border-radius: 999px;
-            font-size: 0.95rem;
-        }
-        .emoji { font-size: 4rem; margin-bottom: 1rem; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0c0d11" />
+  <title>Fidget</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
 </head>
 <body>
-    <div class="emoji">🌀</div>
-    <h1>Fidget Toys</h1>
-    <p>Test de deployment reușit! Site-ul este online și se actualizează corect.</p>
-    <div class="badge">✅ Versiune test &middot; 29 mai 2026</div>
+  <canvas id="scene"></canvas>
+
+  <div id="hud">
+    <header id="top">
+      <div class="title-wrap">
+        <span id="station-index">01</span>
+        <h1 id="station-title">Loading…</h1>
+      </div>
+      <div id="stat"></div>
+    </header>
+
+    <button id="settings-btn" aria-label="Settings">⚙</button>
+
+    <nav id="dots"></nav>
+
+    <div id="hint">swipe the background ⇄ to change toy</div>
+  </div>
+
+  <div id="settings" class="hidden">
+    <div class="panel">
+      <h2>Settings</h2>
+      <label class="row">
+        <span>Volume</span>
+        <input id="set-volume" type="range" min="0" max="1" step="0.01" />
+      </label>
+      <label class="row">
+        <span>Haptics <small id="haptic-note"></small></span>
+        <input id="set-haptics" type="checkbox" />
+      </label>
+      <label class="row">
+        <span>Reduced motion</span>
+        <input id="set-reduced" type="checkbox" />
+      </label>
+      <button id="settings-close">Done</button>
+    </div>
+  </div>
+
+  <div id="tap-to-start">
+    <div>
+      <div class="big">Tap to start</div>
+      <div class="sub">audio needs a tap to wake up</div>
+    </div>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
 </body>
 </html>
