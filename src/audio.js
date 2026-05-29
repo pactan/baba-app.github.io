@@ -15,6 +15,21 @@ const PRESETS = {
   'pop-out':    { body: [250, 0.09], click: [1150, 0.022], noise: 0.30, gain: 0.6 },
   'detent':     { body: [320, 0.04], click: [3100, 0.008], noise: 0.6,  gain: 0.55 },
   'thud':       { body: [110, 0.18], click: [800,  0.02],  noise: 0.25, gain: 0.9 },
+  // keyboard
+  'key':        { body: [165, 0.09], click: [2400, 0.010], noise: 0.5,  gain: 0.8 },
+  'key-up':     { body: [150, 0.05], click: [1800, 0.006], noise: 0.3,  gain: 0.4 },
+  // ratchet (the hero) — tick thickens with torque
+  'ratchet-tick':  { body: [260, 0.03], click: [3200, 0.006], noise: 0.7, gain: 0.5 },
+  'ratchet-heavy': { body: [95,  0.16], click: [1400, 0.020], noise: 0.4, gain: 1.0 },
+  'seat':          { body: [68,  0.30], click: [900,  0.030], noise: 0.3, gain: 1.15 },
+  'snap':          { body: [150, 0.05], click: [5200, 0.010], noise: 0.9, gain: 1.15 },
+  // switches / lock / dice / gears / zip
+  'switch-snap': { body: [185, 0.13], click: [2600, 0.012], noise: 0.5, gain: 0.95 },
+  'unlock':      { body: [300, 0.40], click: [2200, 0.020], noise: 0.2, gain: 1.0 },
+  'gear-tick':   { body: [300, 0.025], click: [2800, 0.006], noise: 0.6, gain: 0.45 },
+  'zip':         { body: [420, 0.020], click: [3600, 0.005], noise: 0.8, gain: 0.45 },
+  'die-hit':     { body: [120, 0.08], click: [1600, 0.020], noise: 0.4, gain: 0.8 },
+  'boing':       { body: [320, 0.26], click: [700,  0.020], noise: 0.2, gain: 0.7 },
 };
 
 export class Sound {
@@ -105,6 +120,54 @@ export class Sound {
       src.connect(bp); bp.connect(ng); ng.connect(out);
       src.start(t); src.stop(t + p.click[1] + 0.02);
     }
+  }
+
+  // A sustained, controllable tone — for the spinner bearing whir. Returns
+  // handles to glide pitch/gain and to stop it. Pitch/gain are smoothed so
+  // changes don't click.
+  tone({ type = 'sawtooth', freq = 200, gain = 0, lowpass = 1800 } = {}) {
+    this.ensure();
+    if (!this.ctx) return { setFreq() {}, setGain() {}, stop() {} };
+    const ctx = this.ctx;
+    const o = ctx.createOscillator();
+    o.type = type;
+    o.frequency.value = freq;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = lowpass;
+    const g = ctx.createGain();
+    g.gain.value = gain;
+    o.connect(lp); lp.connect(g); g.connect(this.dry); g.connect(this.send);
+    o.start();
+    return {
+      setFreq: (f) => o.frequency.setTargetAtTime(f, ctx.currentTime, 0.04),
+      setGain: (v) => g.gain.setTargetAtTime(v, ctx.currentTime, 0.05),
+      setLowpass: (f) => lp.frequency.setTargetAtTime(f, ctx.currentTime, 0.05),
+      stop: () => { g.gain.setTargetAtTime(0, ctx.currentTime, 0.05); o.stop(ctx.currentTime + 0.3); },
+    };
+  }
+
+  // A sustained filtered-noise bed — for rolling/scraping sounds.
+  noiseTone({ freq = 400, q = 1.2, gain = 0 } = {}) {
+    this.ensure();
+    if (!this.ctx) return { setFreq() {}, setGain() {}, stop() {} };
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this._makeNoise(1.0);
+    src.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = freq;
+    bp.Q.value = q;
+    const g = ctx.createGain();
+    g.gain.value = gain;
+    src.connect(bp); bp.connect(g); g.connect(this.dry); g.connect(this.send);
+    src.start();
+    return {
+      setFreq: (f) => bp.frequency.setTargetAtTime(f, ctx.currentTime, 0.05),
+      setGain: (v) => g.gain.setTargetAtTime(v, ctx.currentTime, 0.05),
+      stop: () => { g.gain.setTargetAtTime(0, ctx.currentTime, 0.05); src.stop(ctx.currentTime + 0.3); },
+    };
   }
 
   _makeNoise(seconds) {

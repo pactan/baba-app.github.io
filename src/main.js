@@ -2,6 +2,15 @@ import { Feedback, hapticsSupported } from './feedback.js';
 import { Stage } from './stage.js';
 import { PopStation } from './stations/pop.js';
 import { ClickStation } from './stations/click.js';
+import { SpinStation } from './stations/spin.js';
+import { SlideStation } from './stations/slide.js';
+import { FlipStation } from './stations/flip.js';
+import { SquishStation } from './stations/squish.js';
+import { RatchetStation } from './stations/ratchet.js';
+import { KeysStation } from './stations/keys.js';
+import { LockStation } from './stations/lock.js';
+import { GearsStation } from './stations/gears.js';
+import { ZipperStation } from './stations/zipper.js';
 
 // --- settings (persisted) ---
 const settings = Object.assign(
@@ -46,6 +55,15 @@ const ctx = {
 const stage = new Stage(el('scene'), ctx);
 stage.add(new PopStation(ctx));
 stage.add(new ClickStation(ctx));
+stage.add(new SpinStation(ctx));
+stage.add(new SlideStation(ctx));
+stage.add(new FlipStation(ctx));
+stage.add(new SquishStation(ctx));
+stage.add(new RatchetStation(ctx));
+stage.add(new KeysStation(ctx));
+stage.add(new LockStation(ctx));
+stage.add(new GearsStation(ctx));
+stage.add(new ZipperStation(ctx));
 
 // nav dots
 const dots = el('dots');
