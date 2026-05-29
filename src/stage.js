@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-const SPACING = 7; // world units between stations along X
+const SPACING = 9; // world units between stations along X (kept clear of fit zoom-out)
+const TILT = 0.5;  // how far above the look point the camera sits
 
 // Holds the single renderer/scene/camera, lays stations out along X, pans the
 // camera between them, and routes pointer gestures: a press that hits the
@@ -25,9 +26,13 @@ export class Stage {
     this.scene.background = new THREE.Color(0x0c0d11);
 
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
-    this.camera.position.set(0, 1.25, 7);
-    this.camTargetX = 0;
-    this._look = new THREE.Vector3(0, 0.35, 0);
+    // Camera always sits directly in front of the current station and looks
+    // straight at it (small downward tilt only, so contact shadows still read
+    // and the front-facing rotation gestures stay accurate).
+    this.lookY = 1.0; this.lookYTarget = 1.0;
+    this.camX = 0; this.camTargetX = 0;
+    this.dist = 8; this.distTarget = 8;
+    this.camera.position.set(0, this.lookY + TILT, this.dist);
 
     this._setupEnv();
     this._setupLights();
@@ -101,11 +106,28 @@ export class Stage {
   goTo(i) {
     this.current = Math.max(0, Math.min(this.stations.length - 1, i));
     this.camTargetX = this.current * SPACING;
+    this._applyFrame();
     this.ctx.onPageChange?.(this.current, this.stations[this.current]);
   }
 
   next() { this.goTo(this.current + 1); }
   prev() { this.goTo(this.current - 1); }
+
+  // Camera distance needed to fit a frame given the current aspect ratio.
+  _distFor(f) {
+    const vFov = (this.camera.fov * Math.PI) / 180;
+    const tanV = Math.tan(vFov / 2);
+    const dV = f.halfH / tanV;
+    const dH = f.halfW / (tanV * this.camera.aspect);
+    return Math.max(dV, dH) * 1.08 + 0.4;
+  }
+
+  _applyFrame() {
+    const s = this.stations[this.current];
+    const f = s && s.frame ? s.frame() : { y: 1.0, halfW: 2.5, halfH: 1.6 };
+    this.distTarget = this._distFor(f);
+    this.lookYTarget = f.y;
+  }
 
   _bindResize() {
     const resize = () => {
@@ -113,8 +135,10 @@ export class Stage {
       this.renderer.setSize(w, h, false);
       this.camera.aspect = w / h;
       this.camera.updateProjectionMatrix();
+      this._applyFrame();
     };
     window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', resize);
     resize();
   }
 
@@ -180,15 +204,24 @@ export class Stage {
   }
 
   start() {
+    // Snap to the first station's framing so there's no opening fly-in.
+    this._applyFrame();
+    this.camX = this.camTargetX;
+    this.dist = this.distTarget;
+    this.lookY = this.lookYTarget;
+
     const loop = () => {
       requestAnimationFrame(loop);
       const dt = this.clock.getDelta();
       const t = this.clock.elapsedTime;
 
-      // Smooth camera pan toward the current station.
-      this.camera.position.x += (this.camTargetX - this.camera.position.x) * Math.min(1, dt * 7);
-      this._look.x += (this.camTargetX - this._look.x) * Math.min(1, dt * 7);
-      this.camera.lookAt(this._look);
+      // Smooth pan + zoom toward the current station's frame.
+      const k = Math.min(1, dt * 7);
+      this.camX += (this.camTargetX - this.camX) * k;
+      this.dist += (this.distTarget - this.dist) * k;
+      this.lookY += (this.lookYTarget - this.lookY) * k;
+      this.camera.position.set(this.camX, this.lookY + TILT, this.dist);
+      this.camera.lookAt(this.camX, this.lookY, 0);
 
       this.stations.forEach((s, i) => {
         const near = Math.abs(i - this.current) <= 1;

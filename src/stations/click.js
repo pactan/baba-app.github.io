@@ -13,6 +13,7 @@ const DEPTH = 0.16;         // world depth of full travel
 export class ClickStation extends Station {
   get title() { return 'Click'; }
   get index() { return '02'; }
+  frame() { return { y: 0.6, halfW: 1.5, halfH: 0.95 }; }
 
   build() {
     this.count = this.load('click.count', 0);

@@ -53,6 +53,9 @@ const ctx = {
 
 // --- build stage + stations ---
 const stage = new Stage(el('scene'), ctx);
+// Project a world point to normalized device coords — lets a station measure a
+// rotational gesture around an off-center pivot.
+ctx.project = (vec) => vec.clone().project(stage.camera);
 stage.add(new PopStation(ctx));
 stage.add(new ClickStation(ctx));
 stage.add(new SpinStation(ctx));

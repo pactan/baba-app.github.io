@@ -3,15 +3,17 @@ import { Station } from './base.js';
 import { Spring } from '../spring.js';
 import { Stage } from '../stage.js';
 
-// 01 — Pop. A 5x5 silicone bubble grid. Tap a bubble to pop it through to a
-// concave dimple; tap again pops it back. Drag across bubbles to sweep-pop a
-// run with a rising pitch ladder. Tap-hold anywhere resets with a cascade.
+// 01 — Pop. A 5x5 silicone bubble grid standing up to face you. Tap a bubble to
+// pop it through to a concave dimple; tap again pops it back. Drag across bubbles
+// to sweep-pop a run with a rising pitch ladder. Tap-hold resets with a cascade.
 const N = 5;
 const GAP = 0.42;
+const CY = 1.1;            // vertical center of the grid
 
 export class PopStation extends Station {
   get title() { return 'Pop'; }
   get index() { return '01'; }
+  frame() { return { y: CY, halfW: 1.4, halfH: 1.4 }; }
 
   build() {
     this.count = this.load('pop.count', 0);
@@ -19,15 +21,14 @@ export class PopStation extends Station {
     const silicone = new THREE.MeshPhysicalMaterial({
       color: 0xe7484f, roughness: 0.5, clearcoat: 0.5, clearcoatRoughness: 0.5, sheen: 0.6, sheenColor: 0xff8a8f,
     });
-    this.mat = silicone;
 
-    // Backing plate.
+    // Backing panel behind the bubbles.
     const span = (N - 1) * GAP + 0.7;
     const plate = new THREE.Mesh(
-      new THREE.BoxGeometry(span, 0.18, span),
+      new THREE.BoxGeometry(span, span, 0.2),
       new THREE.MeshPhysicalMaterial({ color: 0xd23b42, roughness: 0.6 })
     );
-    plate.position.y = 0.09;
+    plate.position.set(0, CY, -0.14);
     plate.receiveShadow = true;
     plate.castShadow = true;
     this.group.add(plate);
@@ -35,18 +36,20 @@ export class PopStation extends Station {
     this.bubbles = [];
     this.interactive = [];
     const half = (N - 1) / 2;
+    // Hemisphere pointing +Y; rotated to point +Z (toward the camera).
     const geo = new THREE.SphereGeometry(0.2, 28, 18, 0, Math.PI * 2, 0, Math.PI / 2);
 
     for (let r = 0; r < N; r++) {
       for (let c = 0; c < N; c++) {
         const m = new THREE.Mesh(geo, silicone);
         m.castShadow = true;
-        m.position.set((c - half) * GAP, 0.18, (r - half) * GAP);
+        m.rotation.x = Math.PI / 2;
+        m.position.set((c - half) * GAP, CY + (half - r) * GAP, 0);
         m.userData = {
-          spring: new Spring(220, 16, 0), // 0 = domed up, 1 = popped through (dimple)
+          spring: new Spring(220, 16, 0), // 0 = domed toward you, 1 = popped through
           popped: false,
-          baseY: 0.18,
-          pitch: 1 + ((N - 1 - r) * N + c) * 0.02, // sweep pitch ladder
+          baseZ: 0,
+          pitch: 1 + (r * N + c) * 0.02,  // sweep pitch ladder, top-left -> bottom-right
         };
         this.group.add(m);
         this.bubbles.push(m);
@@ -54,7 +57,7 @@ export class PopStation extends Station {
       }
     }
 
-    this.group.add(Stage.contactShadow(span * 0.75, 0.5));
+    this.group.add(Stage.contactShadow(span * 0.7, 0.45));
 
     this.ripples = new RipplePool(this.group, 6);
     this.holdTimer = null;
@@ -88,7 +91,6 @@ export class PopStation extends Station {
     const b = hit.object;
     this.sweptThisGesture.add(b);
     this._pop(b);
-
     this.holdTimer = setTimeout(() => this._resetAll(), 650);
   }
 
@@ -97,8 +99,8 @@ export class PopStation extends Station {
     const b = hit.object;
     if (this.sweptThisGesture.has(b)) return;
     this.sweptThisGesture.add(b);
-    clearTimeout(this.holdTimer); // a drag isn't a hold
-    this._pop(b, true); // sweep always pops in
+    clearTimeout(this.holdTimer);
+    this._pop(b, true);
   }
 
   onUp() {
@@ -110,7 +112,6 @@ export class PopStation extends Station {
     let i = 0;
     for (const b of this.bubbles) {
       if (!b.userData.popped) continue;
-      // Cascade the un-pop for a satisfying wave.
       setTimeout(() => this._pop(b, false), (i++) * 22);
     }
   }
@@ -119,23 +120,20 @@ export class PopStation extends Station {
     for (const b of this.bubbles) {
       const d = b.userData;
       const v = d.spring.update(dt);
-      // Push the dome down and flip it inside-out as it crosses through.
-      b.position.y = d.baseY - v * 0.16;
-      const s = 1 - v * 2; // crosses zero -> dome inverts to a dimple
+      // Push the dome back and flip it inside-out as it crosses through.
+      b.position.z = d.baseZ - v * 0.16;
+      const s = 1 - v * 2;                 // +1 (toward you) -> -1 (concave)
       b.scale.y = Math.abs(s) < 0.04 ? 0.04 : s;
-      // Anticipation: a touch of squash-out right before the snap-through.
-      const bulge = 1 + 0.12 * Math.sin(Math.min(v, 0.5) * Math.PI);
+      const bulge = 1 + 0.12 * Math.sin(Math.min(v, 0.5) * Math.PI); // anticipation squash
       b.scale.x = b.scale.z = bulge;
     }
     this.ripples.update(dt);
   }
 
-  info() {
-    return `<span class="num">${this.count}</span>pops`;
-  }
+  info() { return `<span class="num">${this.count}</span>pops`; }
 }
 
-// A tiny pool of expanding/fading rings reused across pops.
+// A pool of expanding/fading rings (facing the camera) reused across pops.
 class RipplePool {
   constructor(parent, n) {
     this.items = [];
@@ -143,7 +141,6 @@ class RipplePool {
     for (let i = 0; i < n; i++) {
       const mat = new THREE.MeshBasicMaterial({ color: 0xffd0d2, transparent: true, opacity: 0, depthWrite: false });
       const m = new THREE.Mesh(geo, mat);
-      m.rotation.x = -Math.PI / 2;
       m.visible = false;
       parent.add(m);
       this.items.push({ mesh: m, life: 0 });
@@ -154,7 +151,7 @@ class RipplePool {
   fire(pos) {
     const it = this.items[this.cursor];
     this.cursor = (this.cursor + 1) % this.items.length;
-    it.mesh.position.set(pos.x, 0.2, pos.z);
+    it.mesh.position.set(pos.x, pos.y, 0.12);
     it.mesh.visible = true;
     it.life = 1;
   }
@@ -163,8 +160,7 @@ class RipplePool {
     for (const it of this.items) {
       if (it.life <= 0) continue;
       it.life -= dt * 3;
-      const k = 1 - Math.max(0, it.life);
-      const s = 0.6 + k * 2.2;
+      const s = 0.6 + (1 - Math.max(0, it.life)) * 2.2;
       it.mesh.scale.set(s, s, s);
       it.mesh.material.opacity = Math.max(0, it.life) * 0.7;
       if (it.life <= 0) it.mesh.visible = false;

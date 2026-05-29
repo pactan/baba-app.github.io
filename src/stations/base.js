@@ -14,6 +14,12 @@ export class Station {
   get index() { return '00'; }
   info() { return ''; } // right-aligned HUD stat (HTML allowed)
 
+  // Bounding frame the camera fits to: { y: vertical center, halfW, halfH }.
+  // halfW/halfH are the max extents of the content from the station's x=0 / from y.
+  // The camera zooms out until this box fits the screen, so every toy stays in
+  // frame on any aspect ratio (portrait phone included).
+  frame() { return { y: 1.0, halfW: 2.5, halfH: 1.6 }; }
+
   build() {}
   update(dt, t) {}
 

@@ -12,6 +12,7 @@ const FALLOFF = 0.7;
 export class SquishStation extends Station {
   get title() { return 'Squish'; }
   get index() { return '06'; }
+  frame() { return { y: 1.0, halfW: 1.3, halfH: 1.3 }; }
 
   build() {
     this.mat = new THREE.MeshPhysicalMaterial({

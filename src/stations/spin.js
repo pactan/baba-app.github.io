@@ -10,6 +10,7 @@ const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 export class SpinStation extends Station {
   get title() { return 'Spin'; }
   get index() { return '03'; }
+  frame() { return { y: 0.9, halfW: 1.3, halfH: 1.2 }; }
 
   build() {
     this.maxRpm = this.load('spin.maxrpm', 0);
