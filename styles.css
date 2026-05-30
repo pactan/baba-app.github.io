@@ -43,11 +43,18 @@ html, body {
 #combo.bank #combo-mult { animation: pop 0.4s var(--ease); }
 @keyframes pop { 0% { transform: scale(1); } 40% { transform: scale(1.25); } 100% { transform: scale(1); } }
 
-/* ---------- controls ---------- */
-#controls { position: fixed; inset: 0; z-index: 3; pointer-events: none;
-  display: flex; align-items: flex-end; justify-content: space-between;
-  padding: 0 22px max(30px, calc(env(safe-area-inset-bottom) + 18px)); }
-.steer { display: flex; gap: 14px; pointer-events: auto; }
+/* ---------- controls (explicitly anchored to the bottom) ---------- */
+#controls { position: fixed; inset: 0; z-index: 3; pointer-events: none; }
+.steer { position: fixed; left: 22px; bottom: max(30px, calc(env(safe-area-inset-bottom) + 18px));
+  display: flex; gap: 14px; pointer-events: auto; }
+.drift { position: fixed; right: 22px; bottom: max(30px, calc(env(safe-area-inset-bottom) + 18px)); }
+
+/* hide gameplay UI until the game is running */
+body:not(.playing) #hud, body:not(.playing) #controls { opacity: 0; pointer-events: none; }
+#hud, #controls { transition: opacity 0.5s var(--ease); }
+#err { margin-top: 18px; color: #ff6a6a; font: 12px ui-monospace, monospace; white-space: pre-wrap;
+  max-width: 90vw; text-align: left; }
+
 .pad, .drift {
   pointer-events: auto; border: none; color: var(--fg);
   background: rgba(120,120,128,0.22);
