@@ -4,17 +4,21 @@ import { M, screwHead, clamp } from '../util.js';
 import { Stage } from '../stage.js';
 
 // 10 — Gears. A train of three interlocking gears facing the camera, rotating
-// about Z. Each gear is built from a machined hub + spokes + a rim + N discrete
-// trapezoidal teeth. The circular pitch (arc length per tooth) is SHARED across
-// all gears, so the teeth physically mesh; the center distance between two
-// gears is r1 + r2 (pitch radii). Drive the big gear by a rotational drag around
-// its projected center; the others are rigidly coupled and counter-rotate at the
-// exact tooth-count ratio so the teeth never separate. The train carries inertia
-// and loses speed to bearing friction, free-wheeling after a flick. One discrete
-// gear-tick fires per tooth of the driver, its pitch & loudness scaling with rpm.
+// about Z. Each gear is built completely from scratch: a turned hub with a bore,
+// a spoked web with real lightening holes, a rim ring, and N discrete trapezoidal
+// teeth instanced around the circumference. The circular pitch (arc length per
+// tooth) is SHARED across all wheels, so the teeth physically interlock and the
+// centre distance between meshing wheels is exactly r1 + r2 (pitch radii).
+//
+// Mechanics: the brass driver is turned by a rotational drag measured around its
+// PROJECTED centre (it sits off the station centre). The steel idler and copper
+// wheel are rigidly coupled and counter-rotate at the exact tooth-count ratio so
+// the teeth never separate. The train carries angular inertia and loses speed to
+// bearing friction, free-wheeling after a flick. Exactly one gear-tick fires per
+// driver tooth, with pitch & loudness scaling with rpm.
 
-const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const TAU = Math.PI * 2;
+const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
 export class GearsStation extends Station {
   get title() { return 'Gears'; }
@@ -22,180 +26,183 @@ export class GearsStation extends Station {
   frame() { return { y: 1.05, halfW: 2.3, halfH: 1.25 }; }
 
   build() {
-    this.angle = 0;      // driver angle (rad)
-    this.omega = 0;      // driver angular velocity (rad/s)
+    this.angle = 0;     // driver angle (rad)
+    this.omega = 0;     // driver angular velocity (rad/s)
     this.dragging = false;
+    this.vel = 0;
     this.lastTooth = 0;
 
-    const CY = 1.05;     // train center height
-    const Z = 0.0;       // gear plane
+    const CY = 1.05;    // train centre height
+    const Z = 0.0;      // gear front plane
 
-    // ---- back plate + frame -------------------------------------------------
-    const plateMat = M.darkMetal(0x23262c);
-    plateMat.roughness = 0.55;
-    const plate = new THREE.Mesh(new THREE.BoxGeometry(4.7, 2.5, 0.18), plateMat);
-    plate.position.set(0, CY, Z - 0.34);
-    plate.castShadow = plate.receiveShadow = true;
-    this.group.add(plate);
-    // beveled raised border for depth
-    const border = new THREE.Mesh(new THREE.BoxGeometry(4.5, 2.32, 0.06), M.darkMetal(0x2c3038));
-    border.position.set(0, CY, Z - 0.24);
-    border.receiveShadow = true;
-    this.group.add(border);
-    // four corner bolts
-    const boltMat = M.polishedSteel();
-    for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
-      const b = screwHead(0.1, boltMat);
-      b.position.set(sx * 2.08, CY + sy * 1.0, Z - 0.2);
-      b.rotation.z = Math.random() * Math.PI;
-      this.group.add(b);
-    }
+    this._buildBackplate(CY, Z);
 
-    // ---- gear train ---------------------------------------------------------
-    // Circular pitch p = TAU * r / teeth, shared => pitch radius r = teeth*p/TAU.
-    const p = 0.30;
+    // ---- gear train --------------------------------------------------------
+    // Shared circular pitch p = TAU * r / teeth  =>  pitch radius r = teeth*p/TAU.
+    const p = 0.34;
     const defs = [
-      { teeth: 21, mat: M.brass(),         hub: 0x8a6320, z: 0.0 },   // A — driver (brass)
-      { teeth: 12, mat: M.polishedSteel(), hub: 0x5a6068, z: 0.14 },  // B — idler  (steel)
-      { teeth: 28, mat: M.darkMetal(0xb5663b), hub: 0x6e3a1f, z: 0.0 }, // C — copper
+      { teeth: 23, mat: M.brass(),             hub: 0x9a6f24, dz: 0.00, name: 'A' }, // driver, brass
+      { teeth: 13, mat: M.polishedSteel(),     hub: 0x676d76, dz: 0.16, name: 'B' }, // idler, steel (forward)
+      { teeth: 30, mat: M.darkMetal(0xb56a3c), hub: 0x6e3a1f, dz: 0.00, name: 'C' }, // copper
     ];
-    // Stagger gear B forward in Z slightly so coplanar tooth tips never z-fight
-    // its neighbours; A and C share a plane but never touch each other.
 
     this.gears = [];
-    let cx = -1.55;
+    let cx = -1.5;
     let prevR = 0;
+    let prevTeeth = 0;
     for (let i = 0; i < defs.length; i++) {
       const d = defs[i];
-      const r = (d.teeth * p) / TAU;          // pitch radius
-      if (i > 0) cx += prevR + r;             // center distance = sum of pitch radii
+      const r = (d.teeth * p) / TAU;
+      if (i > 0) cx += prevR + r;             // centre distance = sum of pitch radii
+
       const mesh = this._makeGear(d.teeth, r, p, d.mat, d.hub);
-      mesh.position.set(cx, CY, Z + d.z);
+      mesh.position.set(cx, CY, Z + d.dz);
       this.group.add(mesh);
 
-      // Coupling: meshing gears counter-rotate; ratio = -teethDriver/teethThis.
-      // (Sign alternates down the chain; magnitude is set by tooth counts.)
-      const ratio = i === 0 ? 1 : -(defs[i - 1].teeth / d.teeth) * this.gears[i - 1].ratio;
-      // Phase so a tooth of this gear sits in the valley of its neighbour.
-      let phase = 0;
-      if (i > 0) {
-        // Align the line of centers: put a tooth gap of this gear toward prev.
-        phase = Math.PI / d.teeth; // half a tooth offset for meshing
-      }
-      this.gears.push({ mesh, teeth: d.teeth, r, ratio, phase, x: cx });
+      // Coupling ratio relative to the driver. Each meshing pair counter-rotates
+      // with magnitude (parentTeeth/thisTeeth).
+      const ratio = i === 0 ? 1 : -(prevTeeth / d.teeth) * this.gears[i - 1].ratio;
 
-      // Bearing post + cap behind each gear (visible through the spoke holes).
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.16, r * 0.16, 0.5, 24), M.alu(0x9aa0a8));
-      post.rotation.x = Math.PI / 2; post.position.set(cx, CY, Z + d.z - 0.2);
-      post.castShadow = true; this.group.add(post);
-      const cap = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.12, r * 0.12, 0.08, 20), boltMat);
-      cap.rotation.x = Math.PI / 2; cap.position.set(cx, CY, Z + d.z + 0.12);
-      this.group.add(cap);
-      const slot = screwHead(r * 0.1, boltMat);
-      slot.position.set(cx, CY, Z + d.z + 0.17);
-      this.group.add(slot);
+      // Phase: offset the child by half a tooth pitch so a tooth sits in the
+      // parent's valley along the line of centres (the X axis here).
+      const phase = i === 0 ? 0 : Math.PI / d.teeth;
 
-      prevR = r;
+      this.gears.push({ mesh, teeth: d.teeth, r, ratio, phase, x: cx, dz: d.dz });
+      this._bearing(cx, CY, Z + d.dz, r);
+
+      prevR = r; prevTeeth = d.teeth;
     }
 
-    // Compute initial mesh phases so the trains start interlocked, then refine
-    // each child's phase so its tooth sits in the parent's gap along the line of
-    // centers (purely cosmetic alignment; ratio keeps it locked thereafter).
-    this._alignPhases();
-
-    // ---- invisible grab disc over the driver -------------------------------
+    // ---- invisible rotational grab disc over the driver --------------------
     const g0 = this.gears[0];
     const grab = new THREE.Mesh(
-      new THREE.CircleGeometry(g0.r + 0.25, 40),
+      new THREE.CircleGeometry(g0.r + 0.28, 48),
       new THREE.MeshBasicMaterial({ visible: false })
     );
-    grab.position.set(g0.x, CY, Z + 0.4);
+    grab.position.set(g0.x, CY, Z + 0.5);
     grab.userData.role = 'driver';
     this.group.add(grab);
     this.interactive = [grab];
+
     this.driverX = g0.x;
     this.cy = CY;
 
-    this.group.add(Stage.contactShadow(2.4, 0.42));
+    this.group.add(Stage.contactShadow(2.6, 0.4));
   }
 
-  // Align each gear's rotational phase so a tooth meets the neighbour's gap
-  // along the line of centers (here the X axis). Both meshing wheels carry a
-  // tooth pointing along +X/-X by construction (tooth 0 points +Y after the
-  // shape rotation, and teeth are evenly spaced), so offsetting a child by half
-  // a tooth pitch puts its tip into the parent's valley at the contact point.
-  _alignPhases() {
-    for (let i = 1; i < this.gears.length; i++) {
-      const b = this.gears[i];
-      b.phase = Math.PI / b.teeth; // half-tooth offset for clean meshing
+  // ---- back plate, raised border, corner bolts, bearing posts --------------
+  _buildBackplate(CY, Z) {
+    const plateMat = M.darkMetal(0x22252b);
+    plateMat.roughness = 0.58;
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(4.8, 2.5, 0.2), plateMat);
+    plate.position.set(0, CY, Z - 0.46);
+    plate.castShadow = plate.receiveShadow = true;
+    this.group.add(plate);
+
+    const border = new THREE.Mesh(new THREE.BoxGeometry(4.56, 2.3, 0.1), M.darkMetal(0x2d313a));
+    border.position.set(0, CY, Z - 0.34);
+    border.receiveShadow = true;
+    this.group.add(border);
+
+    // engraved inner recess so the plate reads layered
+    const recess = new THREE.Mesh(new THREE.BoxGeometry(4.3, 2.06, 0.04), M.darkMetal(0x1c1f24));
+    recess.position.set(0, CY, Z - 0.3);
+    recess.receiveShadow = true;
+    this.group.add(recess);
+
+    this.boltMat = M.polishedSteel();
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+      const b = screwHead(0.11, this.boltMat);
+      b.position.set(sx * 2.12, CY + sy * 1.0, Z - 0.27);
+      b.rotation.z = Math.random() * Math.PI;
+      this.group.add(b);
     }
   }
 
-  // Build a single gear: rim ring + spokes + hub + N trapezoidal teeth, all in
-  // a group that rotates about Z (the group's local +Z faces the camera).
+  // Bearing post + cap visible through each gear's lightening holes.
+  _bearing(cx, cy, z, r) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.17, r * 0.19, 0.6, 28), M.alu(0x969ca6));
+    post.rotation.x = Math.PI / 2;
+    post.position.set(cx, cy, z - 0.26);
+    post.castShadow = post.receiveShadow = true;
+    this.group.add(post);
+
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.13, r * 0.15, 0.07, 24), this.boltMat);
+    cap.rotation.x = Math.PI / 2;
+    cap.position.set(cx, cy, z + 0.2);
+    this.group.add(cap);
+
+    const slot = screwHead(r * 0.1, this.boltMat);
+    slot.position.set(cx, cy, z + 0.245);
+    this.group.add(slot);
+  }
+
+  // Build a single gear group (local +Z toward the camera). Rotates about Z.
   _makeGear(teeth, r, pitch, mat, hubColor) {
     const g = new THREE.Group();
-    const thick = 0.30;
-    const rimInner = r * 0.62;
-    const rimOuter = r * 0.96;       // tooth roots sit just outside this
+    const thick = 0.32;
+    const rimOuter = r * 0.94;          // root circle of the teeth
+    const rimInner = r * 0.70;          // inside the rim ring
+    const webR = r * 0.40;              // outer radius of the spoked web region
 
-    // Rim: a flat ring (Tube-like) via a CylinderGeometry shell — use a ring of
-    // a thick torus-ish slab made from a Lathe-free extruded ring.
-    const rim = new THREE.Mesh(
-      new THREE.CylinderGeometry(rimOuter, rimOuter, thick, Math.max(40, teeth * 3), 1, true),
-      mat
-    );
-    rim.rotation.x = Math.PI / 2; rim.castShadow = rim.receiveShadow = true;
-    g.add(rim);
-    // inner wall of the rim (so it reads as a ring, not a disc)
-    const rimIn = new THREE.Mesh(
-      new THREE.CylinderGeometry(rimInner, rimInner, thick, Math.max(32, teeth * 2), 1, true),
-      mat
-    );
+    // ---- rim ring (outer wall, inner wall, two annular faces) --------------
+    const seg = Math.max(48, teeth * 4);
+    const rimOut = new THREE.Mesh(new THREE.CylinderGeometry(rimOuter, rimOuter, thick, seg, 1, true), mat);
+    rimOut.rotation.x = Math.PI / 2; rimOut.castShadow = rimOut.receiveShadow = true; g.add(rimOut);
+    const rimIn = new THREE.Mesh(new THREE.CylinderGeometry(rimInner, rimInner, thick, seg, 1, true), mat);
     rimIn.rotation.x = Math.PI / 2; g.add(rimIn);
-    // front/back rings closing the rim slab
-    const ringShape = new THREE.RingGeometry(rimInner, rimOuter, Math.max(40, teeth * 3));
+    const ringFace = new THREE.RingGeometry(rimInner, rimOuter, seg);
     for (const sz of [1, -1]) {
-      const face = new THREE.Mesh(ringShape, mat);
-      face.position.z = sz * thick / 2;
-      if (sz < 0) face.rotation.y = Math.PI;
-      g.add(face);
+      const f = new THREE.Mesh(ringFace, mat);
+      f.position.z = sz * thick / 2;
+      if (sz < 0) f.rotation.y = Math.PI;
+      g.add(f);
     }
 
-    // Hub: machined boss with a beveled collar.
+    // ---- machined hub ------------------------------------------------------
     const hubMat = M.alu(hubColor);
-    hubMat.roughness = 0.34;
-    const hubR = r * 0.30;
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(hubR, hubR, thick + 0.06, 28), hubMat);
+    hubMat.roughness = 0.32;
+    const hubR = r * 0.22;
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(hubR, hubR, thick + 0.08, 32), hubMat);
     hub.rotation.x = Math.PI / 2; hub.castShadow = true; g.add(hub);
-    const collar = new THREE.Mesh(new THREE.CylinderGeometry(hubR * 1.35, hubR * 1.35, 0.06, 28), hubMat);
-    collar.rotation.x = Math.PI / 2; collar.position.z = thick / 2 + 0.04; g.add(collar);
-    // bore
-    const bore = new THREE.Mesh(new THREE.CylinderGeometry(hubR * 0.5, hubR * 0.5, thick + 0.12, 20), M.darkMetal(0x15171b));
+    for (const sz of [1, -1]) {
+      const collar = new THREE.Mesh(new THREE.CylinderGeometry(hubR * 1.4, hubR * 1.2, 0.07, 32), hubMat);
+      collar.rotation.x = Math.PI / 2; collar.position.z = sz * (thick / 2 + 0.02); g.add(collar);
+    }
+    // bore (dark inner tube + back disc so you never see through to nothing)
+    const bore = new THREE.Mesh(new THREE.CylinderGeometry(hubR * 0.52, hubR * 0.52, thick + 0.14, 24, 1, true),
+      M.darkMetal(0x14161a));
     bore.rotation.x = Math.PI / 2; g.add(bore);
 
-    // Spokes connecting hub to rim (with visible gaps = lightening holes).
-    const nSpokes = teeth >= 24 ? 6 : (teeth >= 16 ? 5 : 4);
-    const spokeLen = rimInner - hubR + 0.04;
-    const spokeGeo = new THREE.BoxGeometry(r * 0.13, spokeLen, thick * 0.7);
-    for (let s = 0; s < nSpokes; s++) {
-      const a = (s / nSpokes) * TAU;
-      const spoke = new THREE.Mesh(spokeGeo, hubMat);
-      const mid = (hubR + rimInner) / 2;
-      spoke.position.set(Math.cos(a) * mid, Math.sin(a) * mid, 0);
-      spoke.rotation.z = a - Math.PI / 2;
-      spoke.castShadow = true;
-      g.add(spoke);
+    // ---- web with lightening holes ----------------------------------------
+    // A thin disc spanning hub->rim, with circular holes punched as dark insets.
+    const web = new THREE.Mesh(new THREE.CylinderGeometry(rimInner + 0.005, rimInner + 0.005, thick * 0.42, seg), hubMat);
+    web.rotation.x = Math.PI / 2; web.castShadow = true; g.add(web);
+
+    const nHoles = teeth >= 26 ? 7 : (teeth >= 18 ? 6 : 4);
+    const holeR = (rimInner - hubR) * 0.34;
+    const holeRing = (hubR + rimInner) / 2;
+    const holeGeo = new THREE.CylinderGeometry(holeR, holeR, thick * 0.5, 22);
+    const holeMat = M.darkMetal(0x16181d);
+    for (let h = 0; h < nHoles; h++) {
+      const a = (h / nHoles) * TAU + Math.PI / nHoles;
+      const hole = new THREE.Mesh(holeGeo, holeMat);
+      hole.rotation.x = Math.PI / 2;
+      hole.position.set(Math.cos(a) * holeRing, Math.sin(a) * holeRing, 0);
+      g.add(hole);
+      // bright rim around each hole for a machined-edge read
+      const lip = new THREE.Mesh(new THREE.TorusGeometry(holeR + 0.01, 0.012, 8, 22), hubMat);
+      lip.position.set(Math.cos(a) * holeRing, Math.sin(a) * holeRing, thick * 0.21);
+      g.add(lip);
+      const lip2 = lip.clone(); lip2.position.z = -thick * 0.21; g.add(lip2);
     }
 
-    // Teeth: trapezoidal involute-approximation. Build ONE extruded tooth shape
-    // and instance it around the circumference. Tooth dimensions derive from the
-    // shared pitch so neighbouring gears interlock.
-    const toothW = pitch * 0.52;       // tooth thickness at pitch line (≈ half pitch)
-    const tipW = toothW * 0.55;        // narrower at tip (trapezoid)
-    const rootW = toothW * 1.12;       // wider at root
-    const adden = pitch * 0.62;        // tooth height above pitch radius
-    const rootR = rimOuter;            // root circle
+    // ---- teeth: trapezoidal, instanced from one extruded shape -------------
+    const toothW = pitch * 0.50;        // tooth thickness at the pitch line
+    const tipW = toothW * 0.56;         // narrower tip
+    const rootW = toothW * 1.18;        // wider root
+    const adden = pitch * 0.60;         // tip rises this far above the pitch radius
+    const rootR = rimOuter;
     const pitchR = r;
     const tipR = r + adden * 0.55;
 
@@ -208,15 +215,14 @@ export class GearsStation extends Station {
     shape.lineTo(rootW / 2, rootR);
     shape.closePath();
     const toothGeo = new THREE.ExtrudeGeometry(shape, {
-      depth: thick, bevelEnabled: true, bevelThickness: 0.015, bevelSize: 0.015, bevelSegments: 1, steps: 1,
+      depth: thick, bevelEnabled: true, bevelThickness: 0.016, bevelSize: 0.016, bevelSegments: 1, steps: 1,
     });
     toothGeo.translate(0, 0, -thick / 2);
     toothGeo.computeVertexNormals();
 
     for (let t = 0; t < teeth; t++) {
-      const a = (t / teeth) * TAU;
       const tooth = new THREE.Mesh(toothGeo, mat);
-      tooth.rotation.z = a; // shape is built pointing +Y (radius up), rotate around Z
+      tooth.rotation.z = (t / teeth) * TAU;   // shape points +Y, rotate about Z
       tooth.castShadow = true;
       g.add(tooth);
     }
@@ -224,6 +230,7 @@ export class GearsStation extends Station {
     return g;
   }
 
+  // --- rotational gesture around the driver's projected centre --------------
   _angleAt(ndc) {
     const p = this.pivotNdc || { x: 0, y: 0 };
     return Math.atan2(ndc.y - p.y, ndc.x - p.x);
@@ -244,13 +251,12 @@ export class GearsStation extends Station {
     const dt = Math.max(1 / 240, now - this.lastT);
     const da = wrap(a - this.lastAngle);
     this.angle += da;
-    // smoothed velocity estimate for the flick
-    this.vel = 0.6 * this.vel + 0.4 * (da / dt);
+    this.vel = 0.55 * this.vel + 0.45 * (da / dt);  // smoothed for the flick
     this.lastAngle = a; this.lastT = now;
   }
 
   onUp() {
-    if (this.dragging) this.omega = clamp(this.vel, -45, 45);
+    if (this.dragging) this.omega = clamp(this.vel, -48, 48);
     this.dragging = false;
   }
 
@@ -258,19 +264,19 @@ export class GearsStation extends Station {
 
   update(dt) {
     if (this.ctx.settings.reducedMotion && !this.dragging) {
-      this.omega *= Math.pow(0.0001, dt); // settle fast
+      this.omega *= Math.pow(0.0001, dt);   // settle fast
     }
     if (!this.dragging) {
+      // bearing friction: a constant stiction term + speed-proportional drag
       const sign = Math.sign(this.omega);
-      // bearing friction: a constant term + a speed-proportional drag
-      const fr = (0.55 + 0.10 * Math.abs(this.omega)) * dt;
+      const fr = (0.5 + 0.11 * Math.abs(this.omega)) * dt;
       if (Math.abs(this.omega) <= fr) this.omega = 0; else this.omega -= sign * fr;
       this.angle += this.omega * dt;
     }
 
     for (const g of this.gears) g.mesh.rotation.z = this.angle * g.ratio + g.phase;
 
-    // One discrete tick per tooth of the driver.
+    // One discrete tick per driver tooth.
     const toothAngle = TAU / this.gears[0].teeth;
     const tooth = Math.floor(this.angle / toothAngle);
     if (tooth !== this.lastTooth) {
@@ -278,8 +284,8 @@ export class GearsStation extends Station {
       if (Math.abs(this.omega) > 0.25 || this.dragging) {
         this.ctx.feedback.emit({
           type: 'gear-tick',
-          intensity: 0.22 + 0.62 * sp,
-          pitch: 0.95 + 0.45 * sp,
+          intensity: 0.2 + 0.62 * sp,
+          pitch: 0.92 + 0.5 * sp,
           pan: clamp(this.driverX / 3, -1, 1),
         });
       }
