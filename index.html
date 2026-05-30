@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#000000" />
-  <title>Fidget</title>
+  <title>DRIFT</title>
   <link rel="stylesheet" href="styles.css" />
   <script type="importmap">
   {
@@ -19,61 +19,41 @@
   <canvas id="scene"></canvas>
   <div id="vignette"></div>
 
+  <!-- HUD -->
   <div id="hud">
-    <header id="top">
-      <div class="title-wrap">
-        <span id="station-index">01</span>
-        <h1 id="station-title">Loading…</h1>
+    <div id="top">
+      <div class="score-wrap">
+        <div id="score">0</div>
+        <div class="sub">SCORE</div>
       </div>
-      <div id="stat"></div>
-    </header>
-
-    <button id="settings-btn" aria-label="Settings">
-      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="3.2"/>
-        <path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.2 5.2l2.1 2.1M16.7 16.7l2.1 2.1M18.8 5.2l-2.1 2.1M7.3 16.7l-2.1 2.1"/>
-      </svg>
-    </button>
-
-    <nav id="dots"></nav>
-    <div id="hint">Swipe to change · two fingers to rotate</div>
-  </div>
-
-  <div id="settings" class="hidden" aria-hidden="true">
-    <div class="sheet">
-      <div class="grabber"></div>
-      <h2>Settings</h2>
-
-      <div class="group">
-        <div class="row">
-          <span class="label">Volume</span>
-          <input id="set-volume" type="range" min="0" max="1" step="0.01" />
-        </div>
-        <div class="row">
-          <span class="label">Haptics <small id="haptic-note"></small></span>
-          <label class="switch">
-            <input id="set-haptics" type="checkbox" />
-            <span class="track"></span><span class="knob"></span>
-          </label>
-        </div>
-        <div class="row">
-          <span class="label">Reduce Motion</span>
-          <label class="switch">
-            <input id="set-reduced" type="checkbox" />
-            <span class="track"></span><span class="knob"></span>
-          </label>
-        </div>
+      <div class="best-wrap">
+        <div id="best">0</div>
+        <div class="sub">BEST</div>
       </div>
+    </div>
 
-      <button id="settings-close">Done</button>
+    <div id="combo">
+      <span id="combo-mult">x1</span>
+      <span id="combo-pending">+0</span>
     </div>
   </div>
 
-  <div id="tap-to-start">
+  <!-- Touch controls -->
+  <div id="controls">
+    <div class="steer">
+      <button id="btn-left" class="pad" aria-label="Left">◀</button>
+      <button id="btn-right" class="pad" aria-label="Right">▶</button>
+    </div>
+    <button id="btn-drift" class="drift" aria-label="Drift">DRIFT</button>
+  </div>
+
+  <!-- Start overlay -->
+  <div id="start">
     <div class="launch">
-      <div class="mark">◐</div>
-      <div class="name">Fidget</div>
-      <div class="sub">Tap anywhere to begin</div>
+      <div class="mark">▢</div>
+      <div class="name">DRIFT</div>
+      <div class="sub">Hold <b>DRIFT</b> and steer to slide.<br/>Chain slides to build your combo.</div>
+      <div class="tap">Tap to start</div>
     </div>
   </div>
 
