@@ -7,14 +7,22 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const HALF = 56;
 
-// --- arcade-but-grounded drift tuning -------------------------------------
-const ENGINE = 16;        // forward acceleration
-const MAX_SPD = 20;       // top speed
-const LIN_DRAG = 0.85;    // rolling resistance
-const TURN = 2.7;         // base turn rate (rad/s)
-const TURN_REF = 7;       // speed for full steering authority
-const GRIP_HIGH = 8.5;    // lateral grip when gripping
-const GRIP_LOW = 1.0;     // lateral grip while drifting (slides)
+// --- drift model (front/rear-wheel steering + traction lerp) ---------------
+// Based on the classic top-down arcade model (KidsCanCode / Godot recipes):
+// the heading is derived from where the front & rear wheels travel, and the
+// velocity is lerped toward that heading by a "traction" factor — high traction
+// grips, low traction (high speed or handbrake) slides => real drift + smoke.
+const WHEEL_BASE = 1.7;        // front-to-rear wheel distance
+const STEER_ANGLE = 0.32;      // max front-wheel steer (rad, ~18°)
+const ENGINE = 46;             // throttle acceleration
+const FRICTION = -2.2;         // linear rolling resistance
+const DRAG = -0.0009;          // quadratic air drag (sets top speed ~22)
+const SLIP_SPEED = 10;         // above this, traction drops (slides easier)
+const TRACTION_SLOW = 5.5;     // grippy traction at low speed
+const TRACTION_FAST = 1.7;     // looser traction at speed (natural drift)
+const TRACTION_DRIFT = 0.85;   // handbrake: very loose => big slides
+const MAX_REVERSE = 6;
+const CAM_H = 38, CAM_DZ = -9; // camera height + how far "behind" (north-up)
 
 export class Game {
   constructor(canvas, audio, input, hud) {
@@ -40,8 +48,9 @@ export class Game {
       env.dispose();
     } catch (e) { /* reflections optional */ }
 
-    this.camera = new THREE.PerspectiveCamera(46, 1, 0.1, 400);
-    this.camPos = new THREE.Vector3(0, 32, -14);
+    this.camera = new THREE.PerspectiveCamera(48, 1, 0.1, 400);
+    this.camPos = new THREE.Vector3(0, CAM_H, CAM_DZ);
+    this.camLook = new THREE.Vector3(0, 0, 0);
 
     this._lights();
     this._world();
@@ -149,7 +158,7 @@ export class Game {
   _smoke() {
     const tex = makePuff(0.85);
     this.smoke = [];
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 64; i++) {
       const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false }));
       m.rotation.x = -Math.PI / 2; m.visible = false; this.scene.add(m);
       this.smoke.push({ mesh: m, life: 0, vx: 0, vz: 0, size: 1 });
@@ -217,92 +226,102 @@ export class Game {
   }
 
   _update(dt) {
-    // ease steering input for a weightier feel
-    const target = this.input.steer;
-    this.steerS += (target - this.steerS) * Math.min(1, dt * 12);
+    // snappy-but-smooth steering input
+    this.steerS += (this.input.steer - this.steerS) * Math.min(1, dt * 18);
     const drift = this.input.drift;
 
-    const fwdV = new THREE.Vector2(Math.sin(this.theta), Math.cos(this.theta));
-    const rightV = new THREE.Vector2(Math.cos(this.theta), -Math.sin(this.theta));
-    let fwd = this.vel.dot(fwdV);
-    let lat = this.vel.dot(rightV);
+    const speed0 = this.vel.length();
+    const h = new THREE.Vector2(Math.sin(this.theta), Math.cos(this.theta)); // forward
 
-    // engine (eased off while drifting for control) + rolling resistance
-    fwd += ENGINE * (drift ? 0.55 : 1) * dt;
-    fwd -= fwd * LIN_DRAG * dt;
-    fwd = clamp(fwd, -3, MAX_SPD);
+    // --- longitudinal forces (engine + friction + drag) ---
+    const acc = new THREE.Vector2(0, 0);
+    acc.addScaledVector(this.vel, FRICTION);            // linear friction
+    acc.addScaledVector(this.vel, speed0 * DRAG);       // quadratic drag
+    acc.addScaledVector(h, ENGINE * (drift ? 0.4 : 1)); // throttle (eased while handbraking)
+    this.vel.addScaledVector(acc, dt);
 
+    // --- steering: derive heading from front/rear wheel travel ---
+    // negative so that "steer right" turns the car right in our (x, z) frame
+    const steerDir = -this.steerS * STEER_ANGLE;
+    const rear = this.pos.clone().addScaledVector(h, -WHEEL_BASE / 2);
+    const front = this.pos.clone().addScaledVector(h, WHEEL_BASE / 2);
+    rear.addScaledVector(this.vel, dt);
+    front.addScaledVector(rotate2(this.vel, steerDir), dt);
+    const heading = front.sub(rear);
+    if (heading.lengthSq() > 1e-7) heading.normalize(); else heading.copy(h);
+
+    // --- traction: lerp velocity toward heading (grip vs slide) ---
+    let traction = speed0 > SLIP_SPEED ? TRACTION_FAST : TRACTION_SLOW;
+    if (drift) traction = TRACTION_DRIFT;
     const speed = this.vel.length();
-    const authority = clamp(Math.abs(fwd) / TURN_REF, 0, 1);
-    const turn = this.steerS * TURN * authority * (drift ? 1.6 : 1);
-    this.theta += turn * dt * (fwd >= 0 ? 1 : -1);
+    const vn = speed > 1e-4 ? this.vel.clone().multiplyScalar(1 / speed) : h.clone();
+    const dirDot = heading.dot(vn);
+    if (dirDot >= 0) {
+      this.vel.lerp(heading.clone().multiplyScalar(speed), Math.min(1, traction * dt));
+    } else {
+      this.vel.copy(heading).multiplyScalar(-Math.min(speed, MAX_REVERSE));
+    }
+    this.theta = Math.atan2(heading.x, heading.y);
 
-    // lateral grip; while drifting the rear slides and scrubs speed (realistic)
-    const grip = drift ? GRIP_LOW : GRIP_HIGH;
-    const preLat = lat;
-    lat -= lat * grip * dt;
-    const scrub = Math.abs(preLat) * 0.12 * dt;
-    fwd = Math.max(0, fwd - scrub);
-
-    const fwd2 = new THREE.Vector2(Math.sin(this.theta), Math.cos(this.theta));
-    const right2 = new THREE.Vector2(Math.cos(this.theta), -Math.sin(this.theta));
-    this.vel.set(fwd2.x * fwd + right2.x * lat, fwd2.y * fwd + right2.y * lat);
-    this.fwd = fwd; this.lat = lat;
-
+    // integrate + boundary bounce
     this.pos.addScaledVector(this.vel, dt);
     for (const ax of ['x', 'y']) {
-      if (this.pos[ax] > HALF - 1) { this.pos[ax] = HALF - 1; this.vel[ax] *= -0.4; }
-      if (this.pos[ax] < -(HALF - 1)) { this.pos[ax] = -(HALF - 1); this.vel[ax] *= -0.4; }
+      if (this.pos[ax] > HALF - 1) { this.pos[ax] = HALF - 1; this.vel[ax] *= -0.45; }
+      if (this.pos[ax] < -(HALF - 1)) { this.pos[ax] = -(HALF - 1); this.vel[ax] *= -0.45; }
     }
 
+    // place car + body lean into the slide
+    const lat = this.vel.dot(new THREE.Vector2(Math.cos(this.theta), -Math.sin(this.theta)));
     this.car.position.set(this.pos.x, 0, this.pos.y);
     this.car.rotation.y = this.theta;
     this.car.rotation.z += (clamp(-lat * 0.05, -0.3, 0.3) - this.car.rotation.z) * Math.min(1, dt * 10);
+    // steer the front wheels visually (front wheels sit at +z => indices 1 & 3)
+    if (this.wheels) { this.wheels[1].rotation.y = -steerDir * 2; this.wheels[3].rotation.y = -steerDir * 2; }
 
-    // drift detection / scoring
-    const slip = speed > 0.5 ? Math.acos(clamp(fwd / speed, -1, 1)) * 180 / Math.PI : 0;
-    const drifting = speed > 4 && slip > 12 && slip < 110;
-    const driftAmt = drifting ? clamp((slip - 12) / 50, 0, 1) : 0;
+    // --- drift detection (slip angle between velocity and heading) ---
+    const slip = speed > 1 ? Math.acos(clamp(dirDot, -1, 1)) * 180 / Math.PI : 0;
+    const drifting = speed > 5 && slip > 8;
+    const driftAmt = drifting ? clamp((slip - 8) / 38, 0, 1) : 0;
 
     if (drifting) {
       this.driftTime += dt; this.notDrift = 0;
       this.mult = clamp(1 + Math.floor(this.driftTime / 1.4), 1, 8);
-      this.pending += speed * driftAmt * dt * 8;
+      this.pending += speed * driftAmt * dt * 9;
       this.hud.setCombo(this.mult, Math.floor(this.pending * this.mult), true);
     } else if (this.pending > 0) {
       this.notDrift += dt;
       if (this.notDrift > 0.5) this._bank();
     }
 
-    // --- friction heat (builds slowly with sustained drift, decays) ---------
-    this.heat = clamp(this.heat + (driftAmt * (speed / MAX_SPD) * 0.8 - 0.35) * dt, 0, 1);
-    this.bodyMat.emissiveIntensity = this.heat * 0.45;       // subtle warm glow
+    // --- friction heat (builds with sustained drift, decays) ---
+    this.heat = clamp(this.heat + (driftAmt * (speed / 22) * 0.85 - 0.35) * dt, 0, 1);
+    this.bodyMat.emissiveIntensity = this.heat * 0.45;
     this.glow.intensity = this.heat * 3.0;
     this.glow.color.setHSL(clamp(0.08 - this.heat * 0.08, 0, 0.1), 1, 0.5);
 
-    // skids + smoke + sparks
+    // --- skids + smoke + sparks ---
     this.skidTimer += dt;
-    if (driftAmt > 0.12 && speed > 4 && this.skidTimer > 0.02) {
+    if (driftAmt > 0.08 && speed > 5 && this.skidTimer > 0.016) {
       this.skidTimer = 0;
       const a = Math.atan2(this.vel.x, this.vel.y);
       this._dropSkid(-0.6, 0.62, a); this._dropSkid(-0.6, -0.62, a);
-      this._emitSmoke(driftAmt);
+      this._emitSmoke(driftAmt); this._emitSmoke(driftAmt);
       if (this.heat > 0.5 && Math.random() < this.heat) this._emitSpark();
     }
     this._fadeSkids(dt); this._updateSmoke(dt); this._updateSparks(dt); this._updateCones(dt);
 
-    // camera (top-down, north-up, slight tilt, leads the motion a little)
-    const lead = this.vel.clone().multiplyScalar(0.28);
-    const tx = this.pos.x + lead.x, tz = this.pos.y + lead.y;
-    this.camPos.lerp(new THREE.Vector3(tx, 32, tz - 13), Math.min(1, dt * 4));
+    // --- camera: smooth, frame-rate-independent, no jittery look-ahead ---
+    const k = 1 - Math.exp(-dt * 6);
+    this.camPos.lerp(new THREE.Vector3(this.pos.x, CAM_H, this.pos.y + CAM_DZ), k);
+    this.camLook.lerp(new THREE.Vector3(this.pos.x, 0, this.pos.y), k);
     this.camera.position.copy(this.camPos);
-    this.camera.lookAt(tx, 0, tz);
+    this.camera.lookAt(this.camLook);
 
     this.sun.position.set(this.pos.x + 12, 26, this.pos.y + 6);
     this.sun.target.position.set(this.pos.x, 0, this.pos.y);
     this.sun.target.updateMatrixWorld();
 
-    this.audio.engine(clamp(Math.abs(fwd) / MAX_SPD, 0, 1));
+    this.audio.engine(clamp(speed / 22, 0, 1));
     this.audio.screech(driftAmt * clamp(speed / 10, 0, 1));
 
     this.hud.setScore(this.score);
@@ -339,20 +358,22 @@ export class Game {
 
   _emitSmoke(amt) {
     const f = new THREE.Vector2(Math.sin(this.theta), Math.cos(this.theta));
+    const r = new THREE.Vector2(Math.cos(this.theta), -Math.sin(this.theta));
+    const side = (Math.random() - 0.5) * 1.2;
     const p = this.smoke[this.smokeCursor]; this.smokeCursor = (this.smokeCursor + 1) % this.smoke.length;
-    p.mesh.position.set(this.pos.x - f.x * 0.7, 0.1, this.pos.y - f.y * 0.7);
-    p.size = 0.6; p.life = 1;
-    p.vx = (Math.random() - 0.5) * 1.6 - this.vel.x * 0.1;
-    p.vz = (Math.random() - 0.5) * 1.6 - this.vel.y * 0.1;
-    p.mesh.material.opacity = 0.32 * amt; p.mesh.visible = true;
+    p.mesh.position.set(this.pos.x - f.x * 0.7 + r.x * side, 0.12, this.pos.y - f.y * 0.7 + r.y * side);
+    p.size = 0.9 + Math.random() * 0.4; p.life = 1;
+    p.vx = (Math.random() - 0.5) * 2.0 - this.vel.x * 0.12;
+    p.vz = (Math.random() - 0.5) * 2.0 - this.vel.y * 0.12;
+    p.mesh.material.opacity = 0.55 * (0.4 + amt); p.mesh.visible = true;
   }
   _updateSmoke(dt) {
     for (const p of this.smoke) {
       if (p.life <= 0) continue;
-      p.life -= dt * 0.9; p.size += dt * 3.2;
+      p.life -= dt * 0.7; p.size += dt * 4.5;
       p.mesh.position.x += p.vx * dt; p.mesh.position.z += p.vz * dt;
       p.mesh.scale.setScalar(p.size);
-      p.mesh.material.opacity = Math.max(0, p.life) * 0.28;
+      p.mesh.material.opacity = Math.max(0, p.life) * 0.45;
       if (p.life <= 0) p.mesh.visible = false;
     }
   }
@@ -412,8 +433,13 @@ export class Game {
   }
 }
 
-function makePuff(strength = 0.9) {
-  const s = 64; const cv = document.createElement('canvas'); cv.width = cv.height = s;
+// rotate a Vector2 by angle a (CCW), returns a new vector
+function rotate2(v, a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  return new THREE.Vector2(v.x * c - v.y * s, v.x * s + v.y * c);
+}
+
+function makePuff(strength = 0.9) {  const s = 64; const cv = document.createElement('canvas'); cv.width = cv.height = s;
   const g = cv.getContext('2d');
   const grd = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
   grd.addColorStop(0, `rgba(255,255,255,${strength})`);
