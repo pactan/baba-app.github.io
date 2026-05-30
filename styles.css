@@ -83,3 +83,6 @@ body:not(.playing) #hud, body:not(.playing) #controls { opacity: 0; pointer-even
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
 .hidden { display: none !important; }
+
+#ver { position: fixed; left: 0; right: 0; bottom: 14px; text-align: center;
+  font-size: 11px; letter-spacing: 2px; color: #44454d; }
