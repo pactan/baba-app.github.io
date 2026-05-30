@@ -483,12 +483,6 @@ export class Game {
   }
 }
 
-// rotate a Vector2 by angle a (CCW), returns a new vector
-function rotate2(v, a) {
-  const c = Math.cos(a), s = Math.sin(a);
-  return new THREE.Vector2(v.x * c - v.y * s, v.x * s + v.y * c);
-}
-
 function makePuff(strength = 0.9) {  const s = 64; const cv = document.createElement('canvas'); cv.width = cv.height = s;
   const g = cv.getContext('2d');
   const grd = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
