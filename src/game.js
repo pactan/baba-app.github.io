@@ -5,7 +5,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 // never block the game from starting.
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const HALF = 56;
+const HALF = 120;   // big arena (240 x 240)
 
 // --- snappy ARCADE drift model --------------------------------------------
 // Not a simulator. The car is light and responsive: instant throttle, quick
@@ -37,7 +37,7 @@ export class Game {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.95;
+    this.renderer.toneMappingExposure = 1.0;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x06070b);
@@ -92,32 +92,68 @@ export class Game {
   }
 
   _world() {
-    // bright sky gradient + fog so the arena reads as a real place with depth
-    this.scene.background = new THREE.Color(0x161c28);
-    this.scene.fog = new THREE.Fog(0x161c28, 30, 78);
+    // DARK theme: a near-black asphalt floor can never wash out to white, no
+    // matter how strong the bloom — the real-GPU bug was a bright floor being
+    // blown out. Neon grid + landmarks give the speed reference instead.
+    this.scene.background = new THREE.Color(0x05060a);
+    this.scene.fog = new THREE.Fog(0x05060a, 70, 185);
 
-    // textured floor: warm light tiles with bold seams = strong speed reference
     const tex = makeFloorTexture();
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(28, 28);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(40, 40);
     tex.anisotropy = 8;
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(HALF * 2 + 80, HALF * 2 + 80),
-      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85, metalness: 0.0 }));
+      new THREE.PlaneGeometry(HALF * 2 + 120, HALF * 2 + 120),
+      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7, metalness: 0.1 }));
     ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; this.scene.add(ground);
 
-    // emissive boundary walls (vivid, picked up by bloom)
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x0a1a3a, roughness: 0.3, metalness: 0.3, emissive: 0x2a9dff, emissiveIntensity: 1.6 });
+    // glowing neon boundary walls
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x05122a, roughness: 0.3, metalness: 0.4, emissive: 0x2a9dff, emissiveIntensity: 2.2 });
     for (const s of [-1, 1]) {
-      const wx = new THREE.Mesh(new THREE.BoxGeometry(HALF * 2 + 1, 1.6, 0.6), wallMat);
-      wx.position.set(0, 0.8, s * HALF); wx.castShadow = wx.receiveShadow = true; this.scene.add(wx);
-      const wz = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.6, HALF * 2 + 1), wallMat);
-      wz.position.set(s * HALF, 0.8, 0); wz.castShadow = wz.receiveShadow = true; this.scene.add(wz);
+      const wx = new THREE.Mesh(new THREE.BoxGeometry(HALF * 2 + 1, 1.8, 0.7), wallMat);
+      wx.position.set(0, 0.9, s * HALF); wx.castShadow = wx.receiveShadow = true; this.scene.add(wx);
+      const wz = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.8, HALF * 2 + 1), wallMat);
+      wz.position.set(s * HALF, 0.9, 0); wz.castShadow = wz.receiveShadow = true; this.scene.add(wz);
     }
-    // corner pillars for landmarks/depth cues
-    const pillarMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, emissive: 0xff9f0a, emissiveIntensity: 0.8 });
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 3.2, 12), pillarMat);
-      p.position.set(sx * (HALF - 1), 1.6, sz * (HALF - 1)); p.castShadow = true; this.scene.add(p);
+
+    this._obstacles();   // big complex level: blocks, pillars, barriers
+  }
+
+  // Solid obstacles the car collides with. Each registers a circular collider
+  // { x, z, r } used by the cheap collision test in _update.
+  _obstacles() {
+    this.blockers = [];
+    const addBlock = (x, z, w, d, h, color, emissive) => {
+      const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 3, 0.18),
+        new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.3, emissive, emissiveIntensity: emissive ? 1.4 : 0 }));
+      m.position.set(x, h / 2, z); m.castShadow = m.receiveShadow = true; this.scene.add(m);
+      this.blockers.push({ x, z, r: Math.max(w, d) * 0.5 + 0.7 });
+    };
+    const addPillar = (x, z, color) => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.6, 5, 16),
+        new THREE.MeshStandardMaterial({ color: 0x0a0e18, roughness: 0.3, metalness: 0.4, emissive: color, emissiveIntensity: 1.7 }));
+      m.position.set(x, 2.5, z); m.castShadow = true; this.scene.add(m);
+      this.blockers.push({ x, z, r: 2.2 });
+    };
+
+    // neon corner pillars
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) addPillar(sx * (HALF - 16), sz * (HALF - 16), sx * sz > 0 ? 0xff2a6d : 0x2affd0);
+
+    // central "downtown" cluster to weave through
+    addBlock(0, 0, 12, 12, 7, 0x141a2a, 0x2a9dff);
+    addBlock(-26, 16, 9, 5, 4, 0x1a1230, 0xb44dff);
+    addBlock(24, -22, 5, 14, 4, 0x1a1230, 0xb44dff);
+    addBlock(30, 26, 7, 7, 5, 0x141a2a, 0x2a9dff);
+    addBlock(-32, -24, 8, 8, 5, 0x141a2a, 0x2a9dff);
+
+    // scattered mid-field barriers across the big arena
+    const spots = [[-70, 50], [62, 64], [-58, -66], [72, -52], [0, 78], [-82, 0], [84, 10], [16, -80], [-40, 80], [48, -84]];
+    for (const [x, z] of spots) addBlock(x, z, 6, 6, 4, 0x161d2e, 0x18d0a0);
+
+    // a ring of low barriers to carve drifts around
+    const ringN = 12, ringR = 52;
+    for (let i = 0; i < ringN; i++) {
+      const a = (i / ringN) * Math.PI * 2;
+      addBlock(Math.cos(a) * ringR, Math.sin(a) * ringR, 3.5, 3.5, 2.5, 0x20283a, 0xff9f0a);
     }
   }
 
@@ -173,7 +209,7 @@ export class Game {
 
   // reset all per-run state (called at construction and on restart)
   _resetRun() {
-    this.pos = new THREE.Vector2(0, 0);
+    this.pos = new THREE.Vector2(0, -75);   // open spot near the south wall
     this.vel = new THREE.Vector2(0, 0); // world-frame velocity (u/s)
     this.theta = 0;                     // heading (yaw)
     this.steerS = 0;                    // eased steering
@@ -322,6 +358,24 @@ export class Game {
     for (const ax of ['x', 'y']) {
       if (this.pos[ax] > HALF - 1) { this.pos[ax] = HALF - 1; this.vel[ax] *= -0.5; this._shake(0.5); }
       if (this.pos[ax] < -(HALF - 1)) { this.pos[ax] = -(HALF - 1); this.vel[ax] *= -0.5; this._shake(0.5); }
+    }
+
+    // --- obstacle collision: push out of circular colliders + bounce ---
+    const CAR_R = 1.1;
+    if (this.blockers) for (const b of this.blockers) {
+      const dx = this.pos.x - b.x, dz = this.pos.y - b.z;
+      const d = Math.hypot(dx, dz), min = b.r + CAR_R;
+      if (d < min && d > 1e-3) {
+        const nx = dx / d, nz = dz / d;
+        this.pos.x = b.x + nx * min;            // push out along the normal
+        this.pos.y = b.z + nz * min;
+        const vdot = this.vel.x * nx + this.vel.y * nz;
+        if (vdot < 0) {                          // reflect inward velocity
+          this.vel.x -= 1.5 * vdot * nx;
+          this.vel.y -= 1.5 * vdot * nz;
+          this._shake(clamp(-vdot * 0.08, 0, 1.2));
+        }
+      }
     }
 
     const speed = this.vel.length();
@@ -554,27 +608,22 @@ export class Game {
   }
 }
 
-// one bold light tile per texture cell: clearly visible seams = strong speed cue
+// dark asphalt tile with a glowing cyan seam — reads as a neon grid, and can
+// never wash out to white because the tile itself is near-black.
 function makeFloorTexture() {
   const s = 256; const cv = document.createElement('canvas'); cv.width = cv.height = s;
   const g = cv.getContext('2d');
-  // dark grout background
-  g.fillStyle = '#222a3a'; g.fillRect(0, 0, s, s);
-  // raised tile with a soft bevel (medium tone so it isn't blown out)
-  const m = 12;
-  const grd = g.createLinearGradient(0, 0, 0, s);
-  grd.addColorStop(0, '#b9c2d4'); grd.addColorStop(1, '#8f9ab2');
-  g.fillStyle = grd; g.fillRect(m, m, s - 2 * m, s - 2 * m);
-  // top/left highlight, bottom/right shadow for 3D bevel
-  g.strokeStyle = 'rgba(255,255,255,0.7)'; g.lineWidth = 3;
-  g.beginPath(); g.moveTo(m, s - m); g.lineTo(m, m); g.lineTo(s - m, m); g.stroke();
-  g.strokeStyle = 'rgba(40,46,60,0.5)'; g.lineWidth = 3;
-  g.beginPath(); g.moveTo(s - m, m); g.lineTo(s - m, s - m); g.lineTo(m, s - m); g.stroke();
-  // fine speckle for texture
-  for (let i = 0; i < 900; i++) {
-    g.fillStyle = `rgba(120,128,142,${0.05 + Math.random() * 0.12})`;
-    g.fillRect(m + Math.random() * (s - 2 * m), m + Math.random() * (s - 2 * m), 1.4, 1.4);
+  // dark asphalt base
+  g.fillStyle = '#0b0e16'; g.fillRect(0, 0, s, s);
+  // subtle speckle
+  for (let i = 0; i < 1400; i++) {
+    g.fillStyle = `rgba(80,90,110,${0.04 + Math.random() * 0.10})`;
+    g.fillRect(Math.random() * s, Math.random() * s, 1.4, 1.4);
   }
+  // glowing grid seam along two edges (tiles tile seamlessly)
+  g.shadowColor = 'rgba(42,157,255,0.9)'; g.shadowBlur = 8;
+  g.strokeStyle = 'rgba(70,170,255,0.85)'; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(0, 1.5); g.lineTo(s, 1.5); g.moveTo(1.5, 0); g.lineTo(1.5, s); g.stroke();
   return new THREE.CanvasTexture(cv);
 }
 

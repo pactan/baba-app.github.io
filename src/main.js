@@ -1,6 +1,6 @@
-import { Game } from './game.js?v=8';
-import { Input } from './input.js?v=8';
-import { Audio } from './audio.js?v=8';
+import { Game } from './game.js?v=9';
+import { Input } from './input.js?v=9';
+import { Audio } from './audio.js?v=9';
 
 const $ = (id) => document.getElementById(id);
 
