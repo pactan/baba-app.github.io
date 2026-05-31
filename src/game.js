@@ -22,7 +22,7 @@ const GRIP = 11;             // lateral grip when gripping (high = tight)
 const DRIFT_GRIP = 1.7;      // lateral grip while drifting (low = slides)
 const DRIFT_TURN_BOOST = 1.7;// extra steering while drifting (swings the tail)
 const DRIFT_MIN_SPD = 11;    // must be going this fast to break traction
-const CAM_H = 24, CAM_DZ = -7; // camera height + offset (close = fast feel)
+const CAM_H = 15, CAM_DZ = -13; // lower + further back => tilted 3D chase view
 
 const RUN_TIME = 60;         // Time Attack run length (s)
 const GHOST_HZ = 20;         // ghost recording sample rate
@@ -37,7 +37,7 @@ export class Game {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.15;
+    this.renderer.toneMappingExposure = 0.95;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x06070b);
@@ -78,8 +78,8 @@ export class Game {
   }
 
   _lights() {
-    this.scene.add(new THREE.HemisphereLight(0x9fb4ff, 0x0a0c12, 0.5));
-    const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+    this.scene.add(new THREE.HemisphereLight(0x9fb4ff, 0x2a3040, 0.35));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.6);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.near = 1; sun.shadow.camera.far = 80;
@@ -92,28 +92,32 @@ export class Game {
   }
 
   _world() {
-    // light, textured asphalt — gives a clear speed reference and a brighter look
+    // bright sky gradient + fog so the arena reads as a real place with depth
+    this.scene.background = new THREE.Color(0x161c28);
+    this.scene.fog = new THREE.Fog(0x161c28, 30, 78);
+
+    // textured floor: warm light tiles with bold seams = strong speed reference
     const tex = makeFloorTexture();
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(16, 16);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(28, 28);
     tex.anisotropy = 8;
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(HALF * 2 + 60, HALF * 2 + 60),
-      new THREE.MeshStandardMaterial({ color: 0xc8ccd4, map: tex, roughness: 0.9, metalness: 0.0 }));
+      new THREE.PlaneGeometry(HALF * 2 + 80, HALF * 2 + 80),
+      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85, metalness: 0.0 }));
     ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; this.scene.add(ground);
-    this.scene.background = new THREE.Color(0xaab2c0);
-    this.scene.fog = new THREE.Fog(0xaab2c0, 50, 130);
 
-    // bright accent grid lines on the light floor
-    const grid = new THREE.GridHelper(HALF * 2, 28, 0x6f7886, 0xd2d7df);
-    grid.position.y = 0.02; grid.material.opacity = 0.5; grid.material.transparent = true; this.scene.add(grid);
-
-    // vivid boundary walls (bloom picks these up)
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x1560d0, roughness: 0.35, metalness: 0.2, emissive: 0x0a84ff, emissiveIntensity: 1.1 });
+    // emissive boundary walls (vivid, picked up by bloom)
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x0a1a3a, roughness: 0.3, metalness: 0.3, emissive: 0x2a9dff, emissiveIntensity: 1.6 });
     for (const s of [-1, 1]) {
-      const wx = new THREE.Mesh(new THREE.BoxGeometry(HALF * 2 + 1, 1.2, 0.5), wallMat);
-      wx.position.set(0, 0.6, s * HALF); wx.castShadow = wx.receiveShadow = true; this.scene.add(wx);
-      const wz = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.2, HALF * 2 + 1), wallMat);
-      wz.position.set(s * HALF, 0.6, 0); wz.castShadow = wz.receiveShadow = true; this.scene.add(wz);
+      const wx = new THREE.Mesh(new THREE.BoxGeometry(HALF * 2 + 1, 1.6, 0.6), wallMat);
+      wx.position.set(0, 0.8, s * HALF); wx.castShadow = wx.receiveShadow = true; this.scene.add(wx);
+      const wz = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.6, HALF * 2 + 1), wallMat);
+      wz.position.set(s * HALF, 0.8, 0); wz.castShadow = wz.receiveShadow = true; this.scene.add(wz);
+    }
+    // corner pillars for landmarks/depth cues
+    const pillarMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, emissive: 0xff9f0a, emissiveIntensity: 0.8 });
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 3.2, 12), pillarMat);
+      p.position.set(sx * (HALF - 1), 1.6, sz * (HALF - 1)); p.castShadow = true; this.scene.add(p);
     }
   }
 
@@ -253,7 +257,7 @@ export class Game {
       ]);
       const c = new EffectComposer(this.renderer);
       c.addPass(new RenderPass(this.scene, this.camera));
-      c.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.55, 0.55, 0.82));
+      c.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.45, 0.5, 0.9));
       c.setSize(innerWidth, innerHeight);
       this.composer = c;
     } catch (e) { this.composer = null; } // fall back to direct rendering
@@ -550,22 +554,27 @@ export class Game {
   }
 }
 
-// light asphalt-ish texture: pale base + subtle speckle so motion reads clearly
+// one bold light tile per texture cell: clearly visible seams = strong speed cue
 function makeFloorTexture() {
   const s = 256; const cv = document.createElement('canvas'); cv.width = cv.height = s;
   const g = cv.getContext('2d');
-  g.fillStyle = '#cfd4dc'; g.fillRect(0, 0, s, s);
-  for (let i = 0; i < 2600; i++) {
-    const x = Math.random() * s, y = Math.random() * s;
-    const v = Math.random();
-    g.fillStyle = v > 0.5 ? `rgba(150,156,168,${0.12 + Math.random() * 0.25})`
-                          : `rgba(255,255,255,${0.15 + Math.random() * 0.3})`;
-    const r = 0.5 + Math.random() * 1.6;
-    g.fillRect(x, y, r, r);
+  // dark grout background
+  g.fillStyle = '#222a3a'; g.fillRect(0, 0, s, s);
+  // raised tile with a soft bevel (medium tone so it isn't blown out)
+  const m = 12;
+  const grd = g.createLinearGradient(0, 0, 0, s);
+  grd.addColorStop(0, '#b9c2d4'); grd.addColorStop(1, '#8f9ab2');
+  g.fillStyle = grd; g.fillRect(m, m, s - 2 * m, s - 2 * m);
+  // top/left highlight, bottom/right shadow for 3D bevel
+  g.strokeStyle = 'rgba(255,255,255,0.7)'; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(m, s - m); g.lineTo(m, m); g.lineTo(s - m, m); g.stroke();
+  g.strokeStyle = 'rgba(40,46,60,0.5)'; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(s - m, m); g.lineTo(s - m, s - m); g.lineTo(m, s - m); g.stroke();
+  // fine speckle for texture
+  for (let i = 0; i < 900; i++) {
+    g.fillStyle = `rgba(120,128,142,${0.05 + Math.random() * 0.12})`;
+    g.fillRect(m + Math.random() * (s - 2 * m), m + Math.random() * (s - 2 * m), 1.4, 1.4);
   }
-  // faint tile seams for a clean, designed look
-  g.strokeStyle = 'rgba(120,128,140,0.25)'; g.lineWidth = 1;
-  g.strokeRect(0.5, 0.5, s - 1, s - 1);
   return new THREE.CanvasTexture(cv);
 }
 
