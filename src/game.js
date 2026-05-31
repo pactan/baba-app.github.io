@@ -32,6 +32,9 @@ const MAX_DRIVE_SPD = 34;    // governed top speed (m/s)
 const HANDBRAKE_GRIP = 0.45; // rear grip multiplier while drifting (locks rear)
 const CAM_H = 38, CAM_DZ = -9;
 
+const RUN_TIME = 60;         // Time Attack run length (s)
+const GHOST_HZ = 20;         // ghost recording sample rate
+
 // static axle loads (N) — used as the per-tire grip ceiling
 const FZF = MASS * G * LR / WHEEL_BASE;
 const FZR = MASS * G * LF / WHEEL_BASE;
@@ -71,17 +74,12 @@ export class Game {
     this._smoke();
     this._sparks();
     this._cones(26);
+    this._ghostCar();
     this._post();
 
-    this.pos = new THREE.Vector2(0, 0);
-    this.vel = new THREE.Vector2(0, 0); // world-frame velocity (m/s)
-    this.theta = 0;                     // heading (yaw)
-    this.omega = 0;                     // yaw rate (rad/s)
-    this.steerS = 0;          // eased steering
-    this.heat = 0;            // tire/friction heat 0..1
     this.best = this._loadBest();
-    this.score = 0;
-    this.pending = 0; this.driftTime = 0; this.mult = 1; this.notDrift = 0;
+    this.bestGhost = this._loadGhost();   // recorded path of the best run
+    this._resetRun();
     this.running = false;
     this.hud.setBest(this.best);
 
@@ -157,6 +155,47 @@ export class Game {
     this.scene.add(this.car);
   }
 
+  // translucent replica that replays the best run
+  _ghostCar() {
+    this.ghost = new THREE.Group();
+    this.ghost.rotation.order = 'YXZ';
+    const mat = new THREE.MeshPhysicalMaterial({
+      color: 0xff9f0a, roughness: 0.3, metalness: 0.2, transparent: true, opacity: 0.35,
+      emissive: 0xff9f0a, emissiveIntensity: 0.5, depthWrite: false,
+    });
+    const body = new THREE.Mesh(new RoundedBoxGeometry(1.55, 0.85, 1.7, 5, 0.26), mat);
+    body.position.y = 0.55; this.ghost.add(body);
+    const cabin = new THREE.Mesh(new RoundedBoxGeometry(1.2, 0.55, 0.95, 5, 0.18), mat);
+    cabin.position.set(0, 1.0, -0.06); this.ghost.add(cabin);
+    this.ghost.visible = false;
+    this.scene.add(this.ghost);
+  }
+
+  // reset all per-run state (called at construction and on restart)
+  _resetRun() {
+    this.pos = new THREE.Vector2(0, 0);
+    this.vel = new THREE.Vector2(0, 0); // world-frame velocity (m/s)
+    this.theta = 0;                     // heading (yaw)
+    this.omega = 0;                     // yaw rate (rad/s)
+    this.steerS = 0;                    // eased steering
+    this.heat = 0;                      // tire/friction heat 0..1
+    this.score = 0;
+    this.pending = 0; this.driftTime = 0; this.mult = 1; this.notDrift = 0;
+    this.timeLeft = RUN_TIME;
+    this.finished = false;
+    this.rec = [];                      // this run's ghost recording
+    this.recT = 0;                      // accumulator for sampling
+    this.ghostHasData = this.bestGhost && this.bestGhost.length > 1;
+    this.ghost.visible = this.ghostHasData;
+    if (this.skids) for (const s of this.skids) { s.life = 0; s.mesh.visible = false; }
+    this.hud.setTime(this.timeLeft);
+    this.hud.setScore(0);
+    this.hud.hideResult();
+  }
+
+  // start a fresh Time Attack run
+  restart() { this._resetRun(); this.running = true; }
+
   _skids() {
     const geo = new THREE.BoxGeometry(0.26, 0.02, 0.6);
     this.skids = [];
@@ -224,7 +263,7 @@ export class Game {
     } catch (e) { this.composer = null; } // fall back to direct rendering
   }
 
-  start() { this.running = true; this.clock.getDelta(); this._loop(); }
+  start() { this._resetRun(); this.running = true; this.clock.getDelta(); this._loop(); }
 
   _loop() {
     requestAnimationFrame(() => this._loop());
@@ -239,6 +278,11 @@ export class Game {
   }
 
   _update(dt) {
+    // --- Time Attack countdown ---
+    this.timeLeft -= dt;
+    if (this.timeLeft <= 0) { this.timeLeft = 0; this._finish(); }
+    this.hud.setTime(this.timeLeft);
+
     // sub-step the physics for stability at high forces / low frame rates
     const steps = 4;
     const h = dt / steps;
@@ -247,6 +291,15 @@ export class Game {
     for (let i = 0; i < steps; i++) this._step(h, drift);
 
     const speed = this.vel.length();
+
+    // --- record this run's path + replay the best-run ghost ---
+    this.recT += dt;
+    const elapsed = RUN_TIME - this.timeLeft;
+    if (this.recT >= 1 / GHOST_HZ) {
+      this.recT = 0;
+      this.rec.push(+this.pos.x.toFixed(2), +this.pos.y.toFixed(2), +this.theta.toFixed(3));
+    }
+    if (this.ghostHasData) this._playGhost(elapsed);
 
     // velocity in the car's local frame (vx = longitudinal, vy = lateral)
     const cs = Math.cos(this.theta), sn = Math.sin(this.theta);
@@ -380,11 +433,49 @@ export class Game {
   _bank() {
     const gained = Math.floor(this.pending * this.mult);
     this.score += gained;
-    if (this.score > this.best) { this.best = this.score; this._saveBest(this.best); this.hud.setBest(this.best); }
     this.audio.bank(this.mult);
     this.hud.bankFlash(gained, this.mult);
     this.pending = 0; this.driftTime = 0; this.mult = 1; this.notDrift = 0;
     this.hud.setCombo(1, 0, false);
+  }
+
+  // end of run: bank any pending combo, save best score + ghost, show results
+  _finish() {
+    if (this.finished) return;
+    this.finished = true;
+    this.running = false;
+    if (this.pending > 0) this.score += Math.floor(this.pending * this.mult);
+    this.hud.setCombo(1, 0, false);
+    this.audio.engine(0); this.audio.screech(0);
+
+    const isBest = this.score > this.best;
+    if (isBest) {
+      this.best = this.score;
+      this._saveBest(this.best);
+      this.hud.setBest(this.best);
+      this.bestGhost = this.rec;            // this run becomes the ghost to beat
+      this._saveGhost(this.rec);
+      this.audio.bank(8);                    // celebratory chime
+    }
+    this.hud.showResult(this.score, this.best, isBest);
+  }
+
+  // interpolate the ghost car along the recorded best run
+  _playGhost(elapsed) {
+    const g = this.bestGhost;
+    const n = g.length / 3;
+    const f = elapsed * GHOST_HZ;          // fractional sample index
+    let i = Math.floor(f);
+    if (i >= n - 1) { i = n - 2; }
+    if (i < 0) { this.ghost.visible = false; return; }
+    const t = clamp(f - i, 0, 1);
+    const ax = g[i * 3], az = g[i * 3 + 1], ath = g[i * 3 + 2];
+    const bx = g[i * 3 + 3], bz = g[i * 3 + 4]; let bth = g[i * 3 + 5];
+    // shortest-arc angle interp
+    let dth = bth - ath; if (dth > Math.PI) dth -= 2 * Math.PI; if (dth < -Math.PI) dth += 2 * Math.PI;
+    this.ghost.visible = true;
+    this.ghost.position.set(ax + (bx - ax) * t, 0, az + (bz - az) * t);
+    this.ghost.rotation.y = ath + dth * t;
   }
 
   _dropSkid(offF, offR, angle) {
@@ -474,6 +565,8 @@ export class Game {
 
   _loadBest() { try { return +localStorage.getItem('drift.best') || 0; } catch { return 0; } }
   _saveBest(v) { try { localStorage.setItem('drift.best', String(v)); } catch {} }
+  _loadGhost() { try { return JSON.parse(localStorage.getItem('drift.ghost')) || null; } catch { return null; } }
+  _saveGhost(arr) { try { localStorage.setItem('drift.ghost', JSON.stringify(arr)); } catch {} }
 
   _resize() {
     const w = innerWidth, h = innerHeight;

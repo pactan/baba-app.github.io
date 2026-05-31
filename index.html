@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#000000" />
   <title>DRIFT</title>
-  <link rel="stylesheet" href="styles.css?v=5" />
+  <link rel="stylesheet" href="styles.css?v=6" />
   <script type="importmap">
   {
     "imports": {
@@ -26,6 +26,10 @@
         <div id="score">0</div>
         <div class="sub">SCORE</div>
       </div>
+      <div class="time-wrap">
+        <div id="time">60.0</div>
+        <div class="sub">TIME</div>
+      </div>
       <div class="best-wrap">
         <div id="best">0</div>
         <div class="sub">BEST</div>
@@ -35,6 +39,17 @@
     <div id="combo">
       <span id="combo-mult">x1</span>
       <span id="combo-pending">+0</span>
+    </div>
+  </div>
+
+  <!-- Results overlay -->
+  <div id="result" class="hidden">
+    <div class="card">
+      <div id="result-badge">TIME'S UP</div>
+      <div id="result-score">0</div>
+      <div class="sub">SCORE</div>
+      <div id="result-best">Best 0</div>
+      <button id="btn-again" class="again">GO AGAIN</button>
     </div>
   </div>
 
@@ -52,13 +67,13 @@
     <div class="launch">
       <div class="mark">▢</div>
       <div class="name">DRIFT</div>
-      <div class="sub">Steer at speed to slide.<br/>Hold <b>DRIFT</b> for big handbrake slides — chain them for combos.</div>
+      <div class="sub"><b>60 seconds.</b> Drift to score — chain slides for big combos.<br/>Beat the gold <b>ghost</b> of your best run.</div>
       <div class="tap">Tap to start</div>
       <div id="err"></div>
     </div>
-    <div id="ver">build v5</div>
+    <div id="ver">build v6</div>
   </div>
 
-  <script type="module" src="src/main.js?v=5"></script>
+  <script type="module" src="src/main.js?v=6"></script>
 </body>
 </html>

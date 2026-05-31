@@ -21,14 +21,39 @@ html, body {
 #hud { position: fixed; inset: 0; z-index: 2; pointer-events: none;
   padding: max(20px, env(safe-area-inset-top)) 22px 0; }
 #top { display: flex; justify-content: space-between; align-items: flex-start; }
-.score-wrap, .best-wrap { text-align: left; }
+.score-wrap { text-align: left; }
+.time-wrap { text-align: center; }
 .best-wrap { text-align: right; }
 #score { font-size: 44px; font-weight: 800; letter-spacing: -1.5px; line-height: 0.95;
   font-variant-numeric: tabular-nums; }
+#time { font-size: 40px; font-weight: 800; letter-spacing: -1px; line-height: 0.95;
+  font-variant-numeric: tabular-nums; }
+#time.low { color: #ff453a; animation: tick 1s steps(1) infinite; }
+@keyframes tick { 50% { opacity: 0.55; } }
 #best { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; color: var(--muted);
   font-variant-numeric: tabular-nums; }
 .sub { font-size: 11px; font-weight: 700; letter-spacing: 2px; color: var(--muted); margin-top: 3px; }
+.time-wrap .sub { text-align: center; }
 .best-wrap .sub { text-align: right; }
+
+/* ---------- results overlay ---------- */
+#result { position: fixed; inset: 0; z-index: 15; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.72); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  opacity: 1; transition: opacity 0.4s var(--ease); }
+#result.hidden { opacity: 0; pointer-events: none; display: flex !important; }
+.card { text-align: center; padding: 0 30px; transform: translateY(0); transition: transform 0.4s var(--ease); }
+#result.hidden .card { transform: translateY(20px); }
+#result-badge { font-size: 15px; font-weight: 800; letter-spacing: 4px; color: var(--muted); }
+#result-badge.record { color: var(--hot); text-shadow: 0 2px 24px rgba(255,159,10,0.6);
+  animation: pop 0.5s var(--ease); }
+#result-score { font-size: 88px; font-weight: 900; letter-spacing: -3px; line-height: 1; margin-top: 8px;
+  font-variant-numeric: tabular-nums; }
+#result-best { font-size: 16px; font-weight: 700; color: var(--muted); margin-top: 6px; }
+.again { margin-top: 34px; pointer-events: auto; border: none; cursor: pointer;
+  padding: 16px 38px; border-radius: 30px; font-size: 17px; font-weight: 800; letter-spacing: 1px;
+  color: #001; background: var(--accent); box-shadow: 0 8px 30px rgba(10,132,255,0.45);
+  transition: transform 0.1s var(--ease); }
+.again:active { transform: scale(0.94); }
 
 #combo {
   position: fixed; left: 0; right: 0; top: 27%; text-align: center;
