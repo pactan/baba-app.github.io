@@ -1,13 +1,18 @@
-import { Game } from './game.js?v=5';
-import { Input } from './input.js?v=5';
-import { Audio } from './audio.js?v=5';
+import { Game } from './game.js?v=6';
+import { Input } from './input.js?v=6';
+import { Audio } from './audio.js?v=6';
 
 const $ = (id) => document.getElementById(id);
 
-let lastScore = -1, lastBest = -1, lastCombo = '';
+let lastScore = -1, lastBest = -1, lastCombo = '', lastTime = '';
 const hud = {
   setScore(v) { if (v !== lastScore) { lastScore = v; $('score').textContent = v.toLocaleString(); } },
   setBest(v) { if (v !== lastBest) { lastBest = v; $('best').textContent = v.toLocaleString(); } },
+  setTime(v) {
+    const shown = v.toFixed(1);
+    if (shown !== lastTime) { lastTime = shown; $('time').textContent = shown; }
+    $('time').classList.toggle('low', v <= 10);
+  },
   setCombo(mult, pending, on) {
     const el = $('combo');
     el.classList.toggle('on', on);
@@ -22,6 +27,15 @@ const hud = {
     el.classList.add('bank');
     setTimeout(() => el.classList.remove('bank'), 420);
   },
+  showResult(score, best, isRecord) {
+    $('result-score').textContent = score.toLocaleString();
+    $('result-best').textContent = 'Best ' + best.toLocaleString();
+    const badge = $('result-badge');
+    badge.textContent = isRecord ? 'NEW RECORD' : "TIME'S UP";
+    badge.classList.toggle('record', isRecord);
+    $('result').classList.remove('hidden');
+  },
+  hideResult() { $('result').classList.add('hidden'); },
 };
 
 // Any failure is shown on the start overlay so it's visible (helps debugging
@@ -59,4 +73,10 @@ function begin() {
 const startEl = $('start');
 startEl.addEventListener('pointerdown', begin);
 startEl.addEventListener('click', begin);
-addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') begin(); });
+addEventListener('keydown', (e) => { if ((e.key === ' ' || e.key === 'Enter') && !started) begin(); });
+
+// "GO AGAIN" restarts the run without rebuilding the scene.
+$('btn-again').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (game) game.restart();
+});
