@@ -7,37 +7,25 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const HALF = 56;
 
-// --- dynamic bicycle model (real vehicle dynamics) -------------------------
-// We simulate the car as two lumped tires (front + rear). Each tire makes a
-// lateral force proportional to its slip angle (the angle between where the
-// tire points and where it's actually moving), saturating at the friction
-// limit mu*load — this is what gives a *speed-dependent* grip: at low speed the
-// slip angles are tiny so the car grips and CANNOT drift; at speed, or under
-// handbrake (which slashes rear grip), the rear breaks away into a real slide.
-const MASS = 1200;            // kg
-const IZ = 1600;              // yaw moment of inertia (kg·m²)
-const LF = 1.25;             // CG -> front axle (m)
-const LR = 1.45;             // CG -> rear axle (m)  (rear-biased => playful)
-const WHEEL_BASE = LF + LR;
-const G = 9.81;
-const MU = 1.55;             // tire-road friction coefficient (grip ceiling)
-const CF = 95000;            // front cornering stiffness (N/rad)
-const CR = 110000;           // rear cornering stiffness (N/rad)
-const STEER_ANGLE = 0.55;    // max road-wheel steer (rad, ~31°)
-const ENGINE_FORCE = 11000;  // drive force at the wheels (N)
-const BRAKE_FORCE = 9000;    // engine-brake / coast deceleration force
-const ROLL_DRAG = 0.4;       // linear rolling resistance per unit speed
-const AIR_DRAG = 0.45;       // quadratic aero drag (caps top speed)
-const MAX_DRIVE_SPD = 34;    // governed top speed (m/s)
-const HANDBRAKE_GRIP = 0.45; // rear grip multiplier while drifting (locks rear)
-const CAM_H = 38, CAM_DZ = -9;
+// --- snappy ARCADE drift model --------------------------------------------
+// Not a simulator. The car is light and responsive: instant throttle, quick
+// steering, tight grip by default (no low-speed sliding) — and pressing DRIFT
+// above a speed threshold cuts rear grip so the tail swings out into a big,
+// controllable, dopamine-y slide. Realism is faked where it feels good.
+const ACCEL = 70;            // forward acceleration (u/s²) — punchy
+const MAX_SPD = 46;          // top speed (u/s)
+const REVERSE_SPD = 12;
+const FWD_DRAG = 0.7;        // natural slow-down
+const TURN_RATE = 3.4;       // max steering yaw rate (rad/s)
+const TURN_SPEEDREF = 13;    // speed for full steering authority
+const GRIP = 11;             // lateral grip when gripping (high = tight)
+const DRIFT_GRIP = 1.7;      // lateral grip while drifting (low = slides)
+const DRIFT_TURN_BOOST = 1.7;// extra steering while drifting (swings the tail)
+const DRIFT_MIN_SPD = 11;    // must be going this fast to break traction
+const CAM_H = 24, CAM_DZ = -7; // camera height + offset (close = fast feel)
 
 const RUN_TIME = 60;         // Time Attack run length (s)
 const GHOST_HZ = 20;         // ghost recording sample rate
-
-// static axle loads (N) — used as the per-tire grip ceiling
-const FZF = MASS * G * LR / WHEEL_BASE;
-const FZR = MASS * G * LF / WHEEL_BASE;
 
 export class Game {
   constructor(canvas, audio, input, hud) {
@@ -63,9 +51,10 @@ export class Game {
       env.dispose();
     } catch (e) { /* reflections optional */ }
 
-    this.camera = new THREE.PerspectiveCamera(48, 1, 0.1, 400);
+    this.camera = new THREE.PerspectiveCamera(52, 1, 0.1, 400);
     this.camPos = new THREE.Vector3(0, CAM_H, CAM_DZ);
     this.camLook = new THREE.Vector3(0, 0, 0);
+    this.shakeAmt = 0;
 
     this._lights();
     this._world();
@@ -103,16 +92,23 @@ export class Game {
   }
 
   _world() {
+    // light, textured asphalt — gives a clear speed reference and a brighter look
+    const tex = makeFloorTexture();
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(16, 16);
+    tex.anisotropy = 8;
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(HALF * 2 + 60, HALF * 2 + 60),
-      new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 0.95, metalness: 0.0 }));
+      new THREE.MeshStandardMaterial({ color: 0xc8ccd4, map: tex, roughness: 0.9, metalness: 0.0 }));
     ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; this.scene.add(ground);
+    this.scene.background = new THREE.Color(0xaab2c0);
+    this.scene.fog = new THREE.Fog(0xaab2c0, 50, 130);
 
-    const grid = new THREE.GridHelper(HALF * 2, 28, 0x2b3340, 0x191d25);
-    grid.position.y = 0.02; this.scene.add(grid);
+    // bright accent grid lines on the light floor
+    const grid = new THREE.GridHelper(HALF * 2, 28, 0x6f7886, 0xd2d7df);
+    grid.position.y = 0.02; grid.material.opacity = 0.5; grid.material.transparent = true; this.scene.add(grid);
 
-    // glowing boundary walls (bloom picks these up)
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x0a1830, roughness: 0.4, metalness: 0.2, emissive: 0x0a84ff, emissiveIntensity: 1.3 });
+    // vivid boundary walls (bloom picks these up)
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x1560d0, roughness: 0.35, metalness: 0.2, emissive: 0x0a84ff, emissiveIntensity: 1.1 });
     for (const s of [-1, 1]) {
       const wx = new THREE.Mesh(new THREE.BoxGeometry(HALF * 2 + 1, 1.2, 0.5), wallMat);
       wx.position.set(0, 0.6, s * HALF); wx.castShadow = wx.receiveShadow = true; this.scene.add(wx);
@@ -174,11 +170,11 @@ export class Game {
   // reset all per-run state (called at construction and on restart)
   _resetRun() {
     this.pos = new THREE.Vector2(0, 0);
-    this.vel = new THREE.Vector2(0, 0); // world-frame velocity (m/s)
+    this.vel = new THREE.Vector2(0, 0); // world-frame velocity (u/s)
     this.theta = 0;                     // heading (yaw)
-    this.omega = 0;                     // yaw rate (rad/s)
     this.steerS = 0;                    // eased steering
     this.heat = 0;                      // tire/friction heat 0..1
+    this.shakeAmt = 0;
     this.score = 0;
     this.pending = 0; this.driftTime = 0; this.mult = 1; this.notDrift = 0;
     this.timeLeft = RUN_TIME;
@@ -283,16 +279,50 @@ export class Game {
     if (this.timeLeft <= 0) { this.timeLeft = 0; this._finish(); }
     this.hud.setTime(this.timeLeft);
 
-    // sub-step the physics for stability at high forces / low frame rates
-    const steps = 4;
-    const h = dt / steps;
-    this.steerS += (this.input.steer - this.steerS) * Math.min(1, dt * 16);
+    // snappy steering: reach input fast (no mushy lag)
+    this.steerS += (this.input.steer - this.steerS) * Math.min(1, dt * 26);
     const drift = this.input.drift;
-    for (let i = 0; i < steps; i++) this._step(h, drift);
+
+    // --- ARCADE physics: forward/lateral split in the body frame ---
+    const cs = Math.cos(this.theta), sn = Math.sin(this.theta);
+    let vFwd = this.vel.x * sn + this.vel.y * cs;
+    let vLat = this.vel.x * cs - this.vel.y * sn;
+
+    // throttle (instant) + drag; eased a touch on handbrake for control
+    vFwd += ACCEL * (drift ? 0.55 : 1) * dt;
+    vFwd -= vFwd * FWD_DRAG * dt;
+    vFwd = clamp(vFwd, -REVERSE_SPD, MAX_SPD);
+
+    // can the tail break loose? only with real speed (no crawl-drifting)
+    const fast = Math.abs(vFwd) > DRIFT_MIN_SPD;
+    const sliding = drift && fast;
+
+    // steering authority scales with speed; drifting swings the tail harder
+    const authority = clamp(Math.abs(vFwd) / TURN_SPEEDREF, 0, 1);
+    const turn = this.steerS * TURN_RATE * authority * (sliding ? DRIFT_TURN_BOOST : 1);
+    this.theta += turn * dt * (vFwd >= 0 ? 1 : -1);
+
+    // lateral grip: tight normally, loose while sliding => the drift
+    const grip = sliding ? DRIFT_GRIP : GRIP;
+    vLat -= vLat * grip * dt;
+    // a kick of lateral velocity when you initiate the slide, for that snap
+    if (sliding) vLat += this.steerS * Math.abs(vFwd) * 0.9 * dt;
+
+    // recompose to world velocity with the NEW heading (mismatch = drift)
+    const cs2 = Math.cos(this.theta), sn2 = Math.sin(this.theta);
+    this.vel.x = vFwd * sn2 + vLat * cs2;
+    this.vel.y = vFwd * cs2 - vLat * sn2;
+
+    // integrate + bouncy walls (with a little shake)
+    this.pos.addScaledVector(this.vel, dt);
+    for (const ax of ['x', 'y']) {
+      if (this.pos[ax] > HALF - 1) { this.pos[ax] = HALF - 1; this.vel[ax] *= -0.5; this._shake(0.5); }
+      if (this.pos[ax] < -(HALF - 1)) { this.pos[ax] = -(HALF - 1); this.vel[ax] *= -0.5; this._shake(0.5); }
+    }
 
     const speed = this.vel.length();
 
-    // --- record this run's path + replay the best-run ghost ---
+    // --- record path + replay the best-run ghost ---
     this.recT += dt;
     const elapsed = RUN_TIME - this.timeLeft;
     if (this.recT >= 1 / GHOST_HZ) {
@@ -301,133 +331,76 @@ export class Game {
     }
     if (this.ghostHasData) this._playGhost(elapsed);
 
-    // velocity in the car's local frame (vx = longitudinal, vy = lateral)
-    const cs = Math.cos(this.theta), sn = Math.sin(this.theta);
-    const vx = this.vel.x * sn + this.vel.y * cs;   // forward
-    const vy = this.vel.x * cs - this.vel.y * sn;   // right
-
-    // place car + body lean into the slide
-    const steerDir = -this.steerS * STEER_ANGLE;
+    // place car + lean/squat into the slide
     this.car.position.set(this.pos.x, 0, this.pos.y);
     this.car.rotation.y = this.theta;
-    this.car.rotation.z += (clamp(vy * 0.04, -0.32, 0.32) - this.car.rotation.z) * Math.min(1, dt * 10);
-    if (this.wheels) { this.wheels[1].rotation.y = -steerDir * 1.4; this.wheels[3].rotation.y = -steerDir * 1.4; }
+    this.car.rotation.z += (clamp(vLat * 0.045, -0.4, 0.4) - this.car.rotation.z) * Math.min(1, dt * 12);
+    if (this.wheels) { this.wheels[1].rotation.y = this.steerS * 0.5; this.wheels[3].rotation.y = this.steerS * 0.5; }
 
-    // --- drift detection from the body slip angle (β): angle between where the
-    // car points and where it actually travels. Requires real speed, so a
-    // slow car can no longer "drift". ---
-    const beta = speed > 1.5 ? Math.abs(Math.atan2(vy, Math.abs(vx))) * 180 / Math.PI : 0;
-    const drifting = speed > 6 && beta > 10;
-    const driftAmt = drifting ? clamp((beta - 10) / 35, 0, 1) : 0;
+    // --- drift amount from how sideways we're moving ---
+    const slip = speed > 2 ? Math.abs(Math.atan2(vLat, Math.abs(vFwd))) * 180 / Math.PI : 0;
+    const drifting = sliding && slip > 8 && speed > 8;
+    const driftAmt = drifting ? clamp((slip - 8) / 30, 0, 1) : 0;
 
     if (drifting) {
       this.driftTime += dt; this.notDrift = 0;
-      this.mult = clamp(1 + Math.floor(this.driftTime / 1.4), 1, 8);
-      this.pending += speed * driftAmt * dt * 6;
+      this.mult = clamp(1 + Math.floor(this.driftTime / 1.2), 1, 10);
+      this.pending += speed * driftAmt * dt * 7;
       this.hud.setCombo(this.mult, Math.floor(this.pending * this.mult), true);
     } else if (this.pending > 0) {
       this.notDrift += dt;
-      if (this.notDrift > 0.5) this._bank();
+      if (this.notDrift > 0.45) this._bank();
     }
 
     // --- friction heat (builds with sustained drift, decays) ---
-    this.heat = clamp(this.heat + (driftAmt * clamp(speed / 26, 0, 1) * 0.85 - 0.35) * dt, 0, 1);
-    this.bodyMat.emissiveIntensity = this.heat * 0.45;
-    this.glow.intensity = this.heat * 3.0;
+    this.heat = clamp(this.heat + (driftAmt * clamp(speed / 26, 0, 1) * 0.9 - 0.4) * dt, 0, 1);
+    this.bodyMat.emissiveIntensity = this.heat * 0.5;
+    this.glow.intensity = this.heat * 3.5;
     this.glow.color.setHSL(clamp(0.08 - this.heat * 0.08, 0, 0.1), 1, 0.5);
 
     // --- skids + smoke + sparks ---
     this.skidTimer += dt;
-    if (driftAmt > 0.08 && speed > 6 && this.skidTimer > 0.016) {
+    if (driftAmt > 0.05 && speed > 8 && this.skidTimer > 0.014) {
       this.skidTimer = 0;
       const a = Math.atan2(this.vel.x, this.vel.y);
       this._dropSkid(-0.6, 0.62, a); this._dropSkid(-0.6, -0.62, a);
       this._emitSmoke(driftAmt); this._emitSmoke(driftAmt);
-      if (this.heat > 0.5 && Math.random() < this.heat) this._emitSpark();
+      if (this.heat > 0.45 && Math.random() < this.heat) this._emitSpark();
+      this._shake(driftAmt * 0.18);
     }
     this._fadeSkids(dt); this._updateSmoke(dt); this._updateSparks(dt); this._updateCones(dt);
 
-    // --- camera: smooth, frame-rate-independent ---
-    const k = 1 - Math.exp(-dt * 6);
-    this.camPos.lerp(new THREE.Vector3(this.pos.x, CAM_H, this.pos.y + CAM_DZ), k);
-    this.camLook.lerp(new THREE.Vector3(this.pos.x, 0, this.pos.y), k);
+    // --- DYNAMIC camera: close, pulls back + FOV punch with speed, shakes ---
+    const sp01 = clamp(speed / MAX_SPD, 0, 1);
+    this.shakeAmt *= Math.pow(0.0001, dt); // decay
+    const sx = (Math.random() - 0.5) * this.shakeAmt;
+    const sz = (Math.random() - 0.5) * this.shakeAmt;
+    // look slightly ahead of the car in the travel direction for anticipation
+    const lead = 0.18;
+    const tx = this.pos.x + this.vel.x * lead;
+    const tz = this.pos.y + this.vel.y * lead;
+    const k = 1 - Math.exp(-dt * 9); // snappier follow
+    const wantH = CAM_H + sp01 * 7;             // pull back when fast
+    const wantDz = CAM_DZ - sp01 * 4;
+    this.camPos.lerp(new THREE.Vector3(tx + sx, wantH, tz + wantDz + sz), k);
+    this.camLook.lerp(new THREE.Vector3(tx, 0, tz), k);
     this.camera.position.copy(this.camPos);
     this.camera.lookAt(this.camLook);
+    const wantFov = 52 + sp01 * 16 + driftAmt * 6; // FOV opens with speed/drift
+    this.camera.fov += (wantFov - this.camera.fov) * Math.min(1, dt * 5);
+    this.camera.updateProjectionMatrix();
 
     this.sun.position.set(this.pos.x + 12, 26, this.pos.y + 6);
     this.sun.target.position.set(this.pos.x, 0, this.pos.y);
     this.sun.target.updateMatrixWorld();
 
-    this.audio.engine(clamp(speed / MAX_DRIVE_SPD, 0, 1));
-    this.audio.screech(driftAmt * clamp(speed / 10, 0, 1));
+    this.audio.engine(clamp(Math.abs(vFwd) / MAX_SPD, 0, 1));
+    this.audio.screech(driftAmt * clamp(speed / 12, 0, 1));
 
     this.hud.setScore(this.score);
   }
 
-  // One physics sub-step of the dynamic bicycle model.
-  _step(h, drift) {
-    const cs = Math.cos(this.theta), sn = Math.sin(this.theta);
-    // world velocity -> body frame: vx forward (+heading), vy lateral (+right)
-    let vx = this.vel.x * sn + this.vel.y * cs;
-    let vy = this.vel.x * cs - this.vel.y * sn;
-    const omega = this.omega;
-    const delta = -this.steerS * STEER_ANGLE; // road-wheel steer angle
-
-    // throttle/brake along the body x-axis (auto-throttle, eased on handbrake)
-    let drive = ENGINE_FORCE * (drift ? 0.35 : 1) * (1 - clamp(vx / MAX_DRIVE_SPD, 0, 1));
-    if (vx < 0) drive = ENGINE_FORCE * 0.5; // creep out of reverse
-
-    // --- slip angles (rad). atan of lateral vs longitudinal velocity at each
-    // axle; the front axle subtracts the steer angle. eps keeps it sane at v~0.
-    const eps = 0.5;
-    const vxs = Math.max(Math.abs(vx), eps) * Math.sign(vx || 1);
-    const alphaF = Math.atan2(vy + LF * omega, Math.abs(vxs)) - delta;
-    const alphaR = Math.atan2(vy - LR * omega, Math.abs(vxs));
-
-    // --- lateral tire forces: linear in slip, saturated at the friction
-    // circle (mu * load). This is the key to realism: at low speed slip angles
-    // are tiny so forces stay well inside the grip limit (no drift); push hard
-    // or yank the handbrake and the rear saturates and breaks away.
-    const rearGrip = drift ? HANDBRAKE_GRIP : 1;
-    let Fyf = -CF * alphaF;
-    let Fyr = -CR * alphaR;
-    const maxF = MU * FZF;
-    const maxR = MU * FZR * rearGrip;
-    Fyf = clamp(Fyf, -maxF, maxF);
-    Fyr = clamp(Fyr, -maxR, maxR);
-
-    // --- longitudinal force: drive minus rolling + aero drag ---
-    const Fdrive = drive - (vx > 0 ? BRAKE_FORCE * 0 : 0);
-    const Fdrag = -ROLL_DRAG * MASS * vx - AIR_DRAG * vx * Math.abs(vx);
-
-    // --- body-frame accelerations (coupled with yaw via the omega terms) ---
-    const ax = (Fdrive + Fdrag - Fyf * Math.sin(delta)) / MASS + vy * omega;
-    const ay = (Fyf * Math.cos(delta) + Fyr) / MASS - vx * omega;
-    const aOmega = (LF * Fyf * Math.cos(delta) - LR * Fyr) / IZ;
-
-    vx += ax * h;
-    vy += ay * h;
-    this.omega += aOmega * h;
-
-    // strong yaw damping at very low speed so the car settles instead of
-    // wobbling/spinning in place (numerical + physical low-speed behaviour)
-    if (Math.abs(vx) < 2) this.omega *= (1 - 3 * h);
-    this.omega *= (1 - 0.6 * h);
-
-    // body frame -> world velocity
-    this.vel.x = vx * sn + vy * cs;
-    this.vel.y = vx * cs - vy * sn;
-
-    // integrate pose
-    this.theta += this.omega * h;
-    this.pos.addScaledVector(this.vel, h);
-
-    // boundary bounce
-    for (const ax2 of ['x', 'y']) {
-      if (this.pos[ax2] > HALF - 1) { this.pos[ax2] = HALF - 1; this.vel[ax2] *= -0.4; this.omega *= 0.6; }
-      if (this.pos[ax2] < -(HALF - 1)) { this.pos[ax2] = -(HALF - 1); this.vel[ax2] *= -0.4; this.omega *= 0.6; }
-    }
-  }
+  _shake(amt) { this.shakeAmt = Math.min(2.5, (this.shakeAmt || 0) + amt); }
 
 
   _bank() {
@@ -435,6 +408,7 @@ export class Game {
     this.score += gained;
     this.audio.bank(this.mult);
     this.hud.bankFlash(gained, this.mult);
+    this._shake(0.2 + Math.min(this.mult, 10) * 0.08); // satisfying punch on cash-in
     this.pending = 0; this.driftTime = 0; this.mult = 1; this.notDrift = 0;
     this.hud.setCombo(1, 0, false);
   }
@@ -574,6 +548,25 @@ export class Game {
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
     if (this.composer) this.composer.setSize(w, h);
   }
+}
+
+// light asphalt-ish texture: pale base + subtle speckle so motion reads clearly
+function makeFloorTexture() {
+  const s = 256; const cv = document.createElement('canvas'); cv.width = cv.height = s;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#cfd4dc'; g.fillRect(0, 0, s, s);
+  for (let i = 0; i < 2600; i++) {
+    const x = Math.random() * s, y = Math.random() * s;
+    const v = Math.random();
+    g.fillStyle = v > 0.5 ? `rgba(150,156,168,${0.12 + Math.random() * 0.25})`
+                          : `rgba(255,255,255,${0.15 + Math.random() * 0.3})`;
+    const r = 0.5 + Math.random() * 1.6;
+    g.fillRect(x, y, r, r);
+  }
+  // faint tile seams for a clean, designed look
+  g.strokeStyle = 'rgba(120,128,140,0.25)'; g.lineWidth = 1;
+  g.strokeRect(0.5, 0.5, s - 1, s - 1);
+  return new THREE.CanvasTexture(cv);
 }
 
 function makePuff(strength = 0.9) {  const s = 64; const cv = document.createElement('canvas'); cv.width = cv.height = s;
