@@ -1,25 +1,26 @@
-// Unified input: on-screen buttons (touch) + keyboard (desktop testing).
-// Exposes a steady state the game samples each frame.
+// Unified input for the platform-drift game: steer left/right + jump.
+// On-screen buttons (touch) and keyboard (desktop testing).
 export class Input {
   constructor() {
     this.left = false;
     this.right = false;
-    this.drift = false;
+    this.jump = false;       // edge-triggered: true for one frame on press
+    this._jumpHeld = false;
 
     const L = document.getElementById('btn-left');
     const R = document.getElementById('btn-right');
-    const D = document.getElementById('btn-drift');
+    const J = document.getElementById('btn-jump');
 
     this._hold(L, (on) => { this.left = on; L.classList.toggle('active', on); });
     this._hold(R, (on) => { this.right = on; R.classList.toggle('active', on); });
-    this._hold(D, (on) => { this.drift = on; D.classList.toggle('active', on); });
+    this._hold(J, (on) => { this._setJump(on); J.classList.toggle('active', on); });
 
     addEventListener('keydown', (e) => this._key(e, true));
     addEventListener('keyup', (e) => this._key(e, false));
   }
 
-  // Pointer-based press/hold that survives finger sliding off the button.
   _hold(el, set) {
+    if (!el) return;
     const down = (e) => { e.preventDefault(); set(true); el.setPointerCapture?.(e.pointerId); };
     const up = (e) => { e.preventDefault(); set(false); };
     el.addEventListener('pointerdown', down);
@@ -28,16 +29,23 @@ export class Input {
     el.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') set(false); });
   }
 
+  _setJump(on) {
+    if (on && !this._jumpHeld) this.jump = true; // rising edge
+    this._jumpHeld = on;
+  }
+
   _key(e, on) {
     switch (e.key) {
       case 'ArrowLeft': case 'a': case 'A': this.left = on; break;
       case 'ArrowRight': case 'd': case 'D': this.right = on; break;
-      case ' ': case 'Shift': this.drift = on; break;
+      case ' ': case 'ArrowUp': case 'w': case 'W': this._setJump(on); break;
       default: return;
     }
     e.preventDefault();
   }
 
-  // steering axis: -1 (left) .. +1 (right)
+  // call once per frame after reading, to clear the one-shot jump
+  endFrame() { this.jump = false; }
+
   get steer() { return (this.right ? 1 : 0) - (this.left ? 1 : 0); }
 }

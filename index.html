@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <meta name="theme-color" content="#000000" />
-  <title>DRIFT</title>
-  <link rel="stylesheet" href="styles.css?v=9" />
+  <meta name="theme-color" content="#070912" />
+  <title>WOOD CUBE</title>
+  <link rel="stylesheet" href="styles.css?v=10" />
   <script type="importmap">
   {
     "imports": {
@@ -26,15 +26,14 @@
         <div id="score">0</div>
         <div class="sub">SCORE</div>
       </div>
-      <div class="time-wrap">
-        <div id="time">60.0</div>
-        <div class="sub">TIME</div>
-      </div>
       <div class="best-wrap">
         <div id="best">0</div>
         <div class="sub">BEST</div>
       </div>
     </div>
+
+    <!-- friction heat meter: smoke -> fire -> burn out -->
+    <div id="heatbar"><div id="heatfill"></div><span id="heatlabel">HEAT</span></div>
 
     <div id="combo">
       <span id="combo-mult">x1</span>
@@ -45,7 +44,7 @@
   <!-- Results overlay -->
   <div id="result" class="hidden">
     <div class="card">
-      <div id="result-badge">TIME'S UP</div>
+      <div id="result-badge">WIPEOUT</div>
       <div id="result-score">0</div>
       <div class="sub">SCORE</div>
       <div id="result-best">Best 0</div>
@@ -53,27 +52,27 @@
     </div>
   </div>
 
-  <!-- Touch controls -->
+  <!-- Touch controls: steer left/right + jump -->
   <div id="controls">
     <div class="steer">
       <button id="btn-left" class="pad" aria-label="Left">◀</button>
       <button id="btn-right" class="pad" aria-label="Right">▶</button>
     </div>
-    <button id="btn-drift" class="drift" aria-label="Drift">DRIFT</button>
+    <button id="btn-jump" class="jump" aria-label="Jump">JUMP</button>
   </div>
 
   <!-- Start overlay -->
   <div id="start">
     <div class="launch">
-      <div class="mark">▢</div>
-      <div class="name">DRIFT</div>
-      <div class="sub"><b>60 seconds.</b> Drift to score — chain slides for big combos.<br/>Beat the gold <b>ghost</b> of your best run.</div>
+      <div class="mark">🪵</div>
+      <div class="name">WOOD CUBE</div>
+      <div class="sub">You roll forward at constant speed.<br/><b>◀ ▶</b> steer &amp; drift · <b>JUMP</b> over gaps.<br/>Stay on the platforms — too much drift and you <b>smoke</b>, then <b>burn</b>.</div>
       <div class="tap">Tap to start</div>
       <div id="err"></div>
     </div>
-    <div id="ver">build v9</div>
+    <div id="ver">build v10</div>
   </div>
 
-  <script type="module" src="src/main.js?v=9"></script>
+  <script type="module" src="src/main.js?v=10"></script>
 </body>
 </html>
