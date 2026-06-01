@@ -33,8 +33,8 @@ export class Game {
     this.renderer.toneMappingExposure = 1.0;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x070912);
-    this.scene.fog = new THREE.Fog(0x070912, 55, 150);
+    this.scene.fog = new THREE.Fog(0x0a0e1c, 60, 165);
+    this._sky();
 
     try {
       const pmrem = new THREE.PMREMGenerator(this.renderer);
@@ -50,6 +50,7 @@ export class Game {
 
     this._lights();
     this._cube();
+    this._trail();
     this._smoke();
     this._fire();
     this._coins();
@@ -67,6 +68,27 @@ export class Game {
     this._resize();
   }
 
+  // big gradient sky dome (deep blue -> dusk purple) so the world has a horizon
+  _sky() {
+    const geo = new THREE.SphereGeometry(280, 32, 16);
+    const mat = new THREE.ShaderMaterial({
+      side: THREE.BackSide, depthWrite: false,
+      uniforms: { top: { value: new THREE.Color(0x0a1230) }, bot: { value: new THREE.Color(0x2a1840) },
+        glow: { value: new THREE.Color(0x4a2a6a) } },
+      vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);}`,
+      fragmentShader: `varying vec3 vP; uniform vec3 top; uniform vec3 bot; uniform vec3 glow;
+        void main(){ float h = normalize(vP).y*0.5+0.5; vec3 c = mix(bot, top, smoothstep(0.0,1.0,h));
+        c += glow * pow(1.0-abs(normalize(vP).y), 6.0)*0.6; gl_FragColor = vec4(c,1.0);}`,
+    });
+    this.scene.add(new THREE.Mesh(geo, mat));
+    // a couple of distant glowing "moons" for depth
+    for (const [x, y, z, c, r] of [[-120, 70, -160, 0x6ad0ff, 14], [150, 95, -120, 0xff7ad0, 9]]) {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(r, 24, 16),
+        new THREE.MeshBasicMaterial({ color: c }));
+      m.position.set(x, y, z); this.scene.add(m);
+    }
+  }
+
   _lights() {
     this.scene.add(new THREE.HemisphereLight(0x8aa0ff, 0x0a0c16, 0.55));
     const sun = new THREE.DirectionalLight(0xfff2e0, 2.0);
@@ -82,16 +104,38 @@ export class Game {
   _cube() {
     this.cube = new THREE.Group();
     this.cube.rotation.order = 'YXZ';
-    this.woodMat = new THREE.MeshStandardMaterial({ map: makeWoodTexture(), roughness: 0.7, metalness: 0.0,
-      emissive: 0xff3300, emissiveIntensity: 0 });
-    const box = new THREE.Mesh(new RoundedBoxGeometry(CUBE, CUBE, CUBE, 4, 0.12), this.woodMat);
+    this.woodMat = new THREE.MeshStandardMaterial({ map: makeWoodTexture(), roughness: 0.65, metalness: 0.0,
+      emissive: 0xff2200, emissiveIntensity: 0 });
+    const geo = new RoundedBoxGeometry(CUBE, CUBE, CUBE, 5, 0.16);
+    const box = new THREE.Mesh(geo, this.woodMat);
     box.castShadow = true; box.position.y = CUBE / 2;
     this.cube.add(box);
-    // a small front marker so you can read heading at a glance
-    const nose = new THREE.Mesh(new THREE.BoxGeometry(CUBE * 0.5, 0.12, 0.2),
-      new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 }));
+    // crisp dark edge outline (reads great against the bright platforms)
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(CUBE, CUBE, CUBE)),
+      new THREE.LineBasicMaterial({ color: 0x2a1c0e }));
+    edges.position.y = CUBE / 2; this.cube.add(edges);
+    // front marker
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(CUBE * 0.5, 0.14, 0.22),
+      new THREE.MeshStandardMaterial({ color: 0x120c06, roughness: 0.6 }));
     nose.position.set(0, CUBE * 0.5, CUBE * 0.5 + 0.01); this.cube.add(nose);
     this.scene.add(this.cube);
+    // soft contact shadow blob (kept flat on the ground, not parented to cube)
+    this.blob = new THREE.Mesh(new THREE.PlaneGeometry(CUBE * 1.7, CUBE * 1.7),
+      new THREE.MeshBasicMaterial({ map: makePuff(0.7), color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false }));
+    this.blob.rotation.x = -Math.PI / 2; this.scene.add(this.blob);
+  }
+
+  // drift trail: a recycled pool of dark scorch quads laid on the platforms
+  _trail() {
+    const geo = new THREE.PlaneGeometry(1, 1);
+    this.trail = [];
+    for (let i = 0; i < 160; i++) {
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        color: 0x120a08, transparent: true, opacity: 0, depthWrite: false }));
+      m.rotation.x = -Math.PI / 2; m.visible = false; this.scene.add(m);
+      this.trail.push({ mesh: m, life: 0 });
+    }
+    this.trailCursor = 0; this.trailTimer = 0;
   }
 
   _smoke() {
@@ -162,14 +206,14 @@ export class Game {
       }
     }
     // one instanced mesh for all platforms (cheap on mobile)
-    const geo = new RoundedBoxGeometry(T * 0.94, 3, T * 0.94, 3, 0.3);
-    const mat = new THREE.MeshStandardMaterial({ color: 0x202a3e, roughness: 0.65, metalness: 0.1,
-      emissive: 0x0a1830, emissiveIntensity: 0.4 });
+    const geo = new RoundedBoxGeometry(T * 0.95, 3, T * 0.95, 3, 0.35);
+    const mat = new THREE.MeshStandardMaterial({ map: makeTileTexture(), roughness: 0.55, metalness: 0.15,
+      emissive: 0x12305a, emissiveIntensity: 0.55 });
     const inst = new THREE.InstancedMesh(geo, mat, cells.length);
     inst.receiveShadow = true; inst.castShadow = true;
     const dummy = new THREE.Object3D();
-    // store an edge color via per-instance tint: alternate checker shading
-    const colA = new THREE.Color(0x232f46), colB = new THREE.Color(0x1b2436);
+    // checkerboard tint for a clean designed look
+    const colA = new THREE.Color(0x2c3c5c), colB = new THREE.Color(0x1e2a42);
     cells.forEach(([i, j], k) => {
       dummy.position.set(i * T, -1.5, j * T); dummy.updateMatrix();
       inst.setMatrixAt(k, dummy.matrix);
@@ -233,6 +277,7 @@ export class Game {
     this.camYaw = 0;
     for (const s of this.smoke) { s.life = 0; s.mesh.visible = false; }
     for (const f of this.flames) { f.life = 0; f.mesh.visible = false; }
+    for (const t of this.trail) { t.life = 0; t.mesh.visible = false; }
     this.hud.setScore(0); this.hud.setHeat(0); this.hud.hideResult();
   }
 
@@ -321,6 +366,22 @@ export class Game {
       }
     }
 
+    // lay a drift trail on the ground while sliding
+    if (driftAmt > 0.1 && !this.airborne) {
+      this.trailTimer += dt;
+      if (this.trailTimer > 0.02) {
+        this.trailTimer = 0;
+        const t = this.trail[this.trailCursor]; this.trailCursor = (this.trailCursor + 1) % this.trail.length;
+        t.mesh.position.set(this.pos.x, 0.06, this.pos.z);
+        t.mesh.rotation.z = Math.atan2(this.vel.x, this.vel.y);
+        t.mesh.scale.set(0.8 + driftAmt * 0.6, 2.4, 1);
+        t.life = 1; t.mesh.visible = true;
+        const warm = this.heat;  // trail glows warmer as it heats up
+        t.mesh.material.color.setRGB(0.07 + warm * 0.5, 0.04 + warm * 0.06, 0.03);
+      }
+    }
+    this._fadeTrail(dt);
+
     // emit smoke/fire from friction heat
     if (this.heat > 0.35) {
       this.smokeTimer = (this.smokeTimer || 0) + dt;
@@ -337,6 +398,10 @@ export class Game {
     const lean = clamp(-steer * driftAmt * 0.5, -0.4, 0.4);
     this.cube.rotation.z = lerp(this.cube.rotation.z, lean, Math.min(1, dt * 10));
     this.cube.rotation.x = lerp(this.cube.rotation.x, this.airborne ? -0.15 : 0, Math.min(1, dt * 8));
+    // contact shadow shrinks/fades as the cube jumps
+    this.blob.position.set(this.pos.x, 0.05, this.pos.z);
+    const air = clamp(1 - this.pos.y / 6, 0.25, 1);
+    this.blob.scale.setScalar(air); this.blob.material.opacity = 0.45 * air;
 
     this._updateCamera(dt, driftAmt);
 
@@ -344,7 +409,8 @@ export class Game {
     this.audio.screech(driftAmt);
     this.audio.fire(this.heat > 0.7 ? (this.heat - 0.7) / 0.3 : 0);
 
-    this.hud.setScore(this.score);
+    // score = banked drift/coins + distance survived (always ticking up)
+    this.hud.setScore(this.score + Math.floor(this.dist));
     this.hud.setHeat(this.heat);
   }
 
@@ -378,6 +444,7 @@ export class Game {
     this.dead = true; this.deadT = 0; this.deathKind = kind;
     this.airborne = true; this.vy = kind === 'burn' ? 4 : -2; // burn pops up, fall drops
     if (this.pending > 0) this.score += Math.floor(this.pending * this.mult);
+    this.score += Math.floor(this.dist);   // bank distance survived
     this.audio.hush();
     this.audio[kind === 'burn' ? 'ignite' : 'death']();
     this._shake(1.2);
@@ -413,6 +480,15 @@ export class Game {
     const isBest = this.score > this.best;
     if (isBest) { this.best = this.score; this._saveBest(this.best); this.hud.setBest(this.best); }
     this.hud.showResult(this.score, this.best, isBest, this.deathKind);
+  }
+
+  _fadeTrail(dt) {
+    for (const t of this.trail) {
+      if (t.life <= 0) continue;
+      t.life -= dt * 0.22;
+      t.mesh.material.opacity = Math.max(0, t.life) * 0.7;
+      if (t.life <= 0) t.mesh.visible = false;
+    }
   }
 
   _emitSmoke(amt) {
@@ -497,5 +573,23 @@ function makePuff(strength = 0.9) {
   grd.addColorStop(0.5, `rgba(255,255,255,${strength * 0.4})`);
   grd.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = grd; g.fillRect(0, 0, s, s);
+  return new THREE.CanvasTexture(cv);
+}
+
+// platform top: subtle panel with a soft inner glow border
+function makeTileTexture() {
+  const s = 128; const cv = document.createElement('canvas'); cv.width = cv.height = s;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, s, s);
+  // inner panel
+  g.fillStyle = '#cdd8ef'; g.fillRect(8, 8, s - 16, s - 16);
+  // glowing inset border
+  g.strokeStyle = 'rgba(90,160,255,0.9)'; g.lineWidth = 3;
+  g.strokeRect(10, 10, s - 20, s - 20);
+  // fine speckle
+  for (let i = 0; i < 500; i++) {
+    g.fillStyle = `rgba(120,140,180,${0.05 + Math.random() * 0.12})`;
+    g.fillRect(10 + Math.random() * (s - 20), 10 + Math.random() * (s - 20), 1.4, 1.4);
+  }
   return new THREE.CanvasTexture(cv);
 }
