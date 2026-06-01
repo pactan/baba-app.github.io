@@ -1,6 +1,6 @@
-// Lightweight Web Audio: a continuous engine tone (pitch ∝ speed), a tire
-// screech (filtered noise while drifting), and a short "bank" chime when a
-// combo is cashed in. Must be started from a user gesture (the start tap).
+// Web Audio for the wood-cube game: a low rolling rumble (constant), a friction
+// screech that rises while drifting, a fire roar when ablaze, plus jump/land
+// and death blips. Must be started from a user gesture.
 export class Audio {
   constructor() { this.ctx = null; }
 
@@ -10,54 +10,66 @@ export class Audio {
     if (!C) return;
     const ctx = new C();
     this.ctx = ctx;
-    this.master = ctx.createGain(); this.master.gain.value = 0.6; this.master.connect(ctx.destination);
+    this.master = ctx.createGain(); this.master.gain.value = 0.55; this.master.connect(ctx.destination);
 
-    // Engine: two detuned saws through a lowpass.
-    this.engGain = ctx.createGain(); this.engGain.gain.value = 0.0; this.engGain.connect(this.master);
-    this.engLp = ctx.createBiquadFilter(); this.engLp.type = 'lowpass'; this.engLp.frequency.value = 600;
-    this.engLp.connect(this.engGain);
-    this.osc1 = ctx.createOscillator(); this.osc1.type = 'sawtooth'; this.osc1.frequency.value = 60;
-    this.osc2 = ctx.createOscillator(); this.osc2.type = 'sawtooth'; this.osc2.frequency.value = 61.5;
-    this.osc1.connect(this.engLp); this.osc2.connect(this.engLp);
-    this.osc1.start(); this.osc2.start();
+    // rolling rumble: low triangle through a lowpass
+    this.rollGain = ctx.createGain(); this.rollGain.gain.value = 0.0; this.rollGain.connect(this.master);
+    this.rollLp = ctx.createBiquadFilter(); this.rollLp.type = 'lowpass'; this.rollLp.frequency.value = 240;
+    this.rollLp.connect(this.rollGain);
+    this.roll = ctx.createOscillator(); this.roll.type = 'triangle'; this.roll.frequency.value = 70;
+    this.roll.connect(this.rollLp); this.roll.start();
 
-    // Screech: looping white noise through a bandpass.
+    // friction screech + fire roar: shared noise source, two filters
     const buf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
     const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    this.noise = ctx.createBufferSource(); this.noise.buffer = buf; this.noise.loop = true;
-    this.scrBp = ctx.createBiquadFilter(); this.scrBp.type = 'bandpass'; this.scrBp.frequency.value = 1600; this.scrBp.Q.value = 1.2;
+
+    this.scrBp = ctx.createBiquadFilter(); this.scrBp.type = 'bandpass'; this.scrBp.frequency.value = 1500; this.scrBp.Q.value = 1.1;
     this.scrGain = ctx.createGain(); this.scrGain.gain.value = 0;
-    this.noise.connect(this.scrBp); this.scrBp.connect(this.scrGain); this.scrGain.connect(this.master);
-    this.noise.start();
+    this.noise1 = ctx.createBufferSource(); this.noise1.buffer = buf; this.noise1.loop = true;
+    this.noise1.connect(this.scrBp); this.scrBp.connect(this.scrGain); this.scrGain.connect(this.master); this.noise1.start();
+
+    this.fireLp = ctx.createBiquadFilter(); this.fireLp.type = 'lowpass'; this.fireLp.frequency.value = 700;
+    this.fireGain = ctx.createGain(); this.fireGain.gain.value = 0;
+    this.noise2 = ctx.createBufferSource(); this.noise2.buffer = buf; this.noise2.loop = true;
+    this.noise2.connect(this.fireLp); this.fireLp.connect(this.fireGain); this.fireGain.connect(this.master); this.noise2.start();
   }
 
-  // speed01: 0..1, throttle bool
-  engine(speed01) {
+  roll01(v) { // constant rolling intensity 0..1
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
-    this.osc1.frequency.setTargetAtTime(55 + speed01 * 190, t, 0.08);
-    this.osc2.frequency.setTargetAtTime(56.5 + speed01 * 196, t, 0.08);
-    this.engLp.frequency.setTargetAtTime(500 + speed01 * 2200, t, 0.1);
-    this.engGain.gain.setTargetAtTime(0.05 + speed01 * 0.14, t, 0.1);
+    this.rollGain.gain.setTargetAtTime(0.06 + v * 0.10, t, 0.1);
+    this.roll.frequency.setTargetAtTime(60 + v * 40, t, 0.1);
+  }
+  screech(amount) { // friction 0..1
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.scrGain.gain.setTargetAtTime(amount * 0.20, t, 0.05);
+    this.scrBp.frequency.setTargetAtTime(1200 + amount * 1500, t, 0.06);
+  }
+  fire(amount) { // blaze 0..1
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.fireGain.gain.setTargetAtTime(amount * 0.28, t, 0.08);
   }
 
-  screech(amount) { // 0..1
+  _blip(freq, dur, type, gain, slideTo) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
-    this.scrGain.gain.setTargetAtTime(amount * 0.22, t, 0.05);
-    this.scrBp.frequency.setTargetAtTime(1300 + amount * 1400, t, 0.06);
+    const o = this.ctx.createOscillator(); o.type = type || 'square';
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(gain || 0.25, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.frequency.setValueAtTime(freq, t);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+    o.connect(g); g.connect(this.master); o.start(t); o.stop(t + dur + 0.02);
   }
+  jump() { this._blip(420, 0.18, 'square', 0.22, 760); }
+  land() { this._blip(200, 0.12, 'sine', 0.2, 120); }
+  ignite() { this._blip(120, 0.5, 'sawtooth', 0.25, 380); }
+  death() { this._blip(300, 0.6, 'sawtooth', 0.3, 60); }
+  point(mult) { this._blip(500 + Math.min(mult, 8) * 60, 0.16, 'triangle', 0.2, (700 + Math.min(mult, 8) * 80)); }
 
-  bank(mult) { // a short rising chime, brighter with the multiplier
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    const o = this.ctx.createOscillator(); o.type = 'triangle';
-    const g = this.ctx.createGain(); g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
-    const base = 440 + Math.min(mult, 8) * 70;
-    o.frequency.setValueAtTime(base, t);
-    o.frequency.exponentialRampToValueAtTime(base * 1.5, t + 0.18);
-    o.connect(g); g.connect(this.master); o.start(t); o.stop(t + 0.4);
-  }
+  // silence loops on game over
+  hush() { this.roll01(0); this.screech(0); this.fire(0); }
 }
