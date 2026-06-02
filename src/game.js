@@ -7,7 +7,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 
 // --- tuning ---------------------------------------------------------------
-const SPEED = 26;          // CONSTANT forward speed (never changes)
+const BASE_SPEED = 24;     // base forward speed (constant unless boosting)
 const TURN = 2.7;          // steering yaw rate (rad/s)
 const GRIP = 3.2;          // how fast velocity catches up to heading (low = more drift)
 const GRAVITY = 55;
@@ -15,10 +15,20 @@ const JUMP_V = 17;         // jump launch velocity
 const CUBE = 2.2;          // cube size
 
 const T = 15;              // platform tile size
-const GRID = 7;            // cells span -GRID..GRID  (15x15 tiles)
-const HOLE_CHANCE = 0.2;   // fraction of tiles that are missing (gaps)
+const WIDTH = 3;           // course half-width in tiles (x from -3..3 => 7 wide)
+const LEVELS = 5;          // number of levels along the course
+const LEVEL_LEN = 11;      // tiles (in z) per level
+const START_PAD = 2;       // safe rows before level 1
+// per-level hole density + accent colour (deep -> intense as you progress)
+const LEVEL_HOLES = [0.10, 0.17, 0.24, 0.30, 0.36];
+const LEVEL_TINT = [0x2c3c5c, 0x2a4a4a, 0x46365e, 0x5e3a2e, 0x5e2e44];
+const LEVEL_GLOW = [0x2fd0ff, 0x2fffa8, 0xb46cff, 0xffa23a, 0xff4d7a];
+
+// power-up types
+const PWR = { SPEED: 0, DOUBLE: 1, SHIELD: 2 };
 
 const CAM_BACK = 13, CAM_H = 12; // chase camera offset
+
 
 export class Game {
   constructor(canvas, audio, input, hud) {
@@ -54,6 +64,7 @@ export class Game {
     this._smoke();
     this._fire();
     this._coins();
+    this._powerups();
     this._post();
 
     this.best = this._loadBest();
@@ -118,6 +129,10 @@ export class Game {
     const nose = new THREE.Mesh(new THREE.BoxGeometry(CUBE * 0.5, 0.14, 0.22),
       new THREE.MeshStandardMaterial({ color: 0x120c06, roughness: 0.6 }));
     nose.position.set(0, CUBE * 0.5, CUBE * 0.5 + 0.01); this.cube.add(nose);
+    // shield aura (shown only while a SHIELD power-up is held)
+    this.shieldMesh = new THREE.Mesh(new THREE.SphereGeometry(CUBE * 1.1, 20, 16),
+      new THREE.MeshBasicMaterial({ color: 0x57ff8a, transparent: true, opacity: 0.22, depthWrite: false }));
+    this.shieldMesh.position.y = CUBE / 2; this.shieldMesh.visible = false; this.cube.add(this.shieldMesh);
     this.scene.add(this.cube);
     // soft contact shadow blob (kept flat on the ground, not parented to cube)
     this.blob = new THREE.Mesh(new THREE.PlaneGeometry(CUBE * 1.7, CUBE * 1.7),
@@ -177,6 +192,36 @@ export class Game {
     }
   }
 
+  // 3 collectible power-ups: a floating glowing icon-cube in a ring
+  _powerups() {
+    this.powerups = [];
+    for (let i = 0; i < 3; i++) {
+      const grp = new THREE.Group();
+      const core = new THREE.Mesh(new RoundedBoxGeometry(1.6, 1.6, 1.6, 4, 0.2),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.25, metalness: 0.3, emissive: 0xffffff, emissiveIntensity: 0.8 }));
+      grp.add(core);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.12, 8, 28),
+        new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      ring.rotation.x = Math.PI / 2; grp.add(ring);
+      grp.visible = false; this.scene.add(grp);
+      this.powerups.push({ group: grp, core, ring, alive: false, type: 0 });
+    }
+  }
+
+  _dressPowerup(p) {
+    // colour + icon by type
+    const cfg = {
+      [PWR.SPEED]:  { c: 0x36e0ff, label: '»' },
+      [PWR.DOUBLE]: { c: 0xffd23a, label: 'x2' },
+      [PWR.SHIELD]: { c: 0x57ff8a, label: '◇' },
+    }[p.type];
+    p.core.material.color.setHex(cfg.c); p.core.material.emissive.setHex(cfg.c);
+    p.ring.material.color.setHex(cfg.c);
+    if (p.label) p.group.remove(p.label);
+    p.label = makeLabel(cfg.label, 0, 1.7, 0, cfg.c, 2.2);
+    p.group.add(p.label);
+  }
+
   async _post() {
     this.composer = null;
     try {
@@ -193,70 +238,149 @@ export class Game {
     } catch (e) { this.composer = null; }
   }
 
-  // --- LEVEL: a grid of platforms, some present, some missing (gaps) -------
+  // --- COURSE: 5 levels laid end-to-end along +z. Each level is a band of
+  // rows; gaps get denser and the accent colour shifts per level. A finish
+  // line caps the course. ---
   _buildLevel() {
     if (this.platMesh) { this.scene.remove(this.platMesh); this.platMesh.geometry.dispose(); }
     this.solid = new Set();
     const cells = [];
-    for (let i = -GRID; i <= GRID; i++) {
-      for (let j = -GRID; j <= GRID; j++) {
-        // keep a safe 3x3 platform around spawn (0,0); holes elsewhere
-        const safe = Math.abs(i) <= 1 && Math.abs(j) <= 1;
-        if (safe || Math.random() > HOLE_CHANCE) { this.solid.add(i + ',' + j); cells.push([i, j]); }
+    const tints = [];
+    // course runs from row 0 to row END in z; x spans -WIDTH..WIDTH
+    this.courseEnd = START_PAD + LEVELS * LEVEL_LEN;     // last row index
+    this.finishZ = this.courseEnd * T;
+    for (let j = -START_PAD; j <= this.courseEnd; j++) {
+      // which level is this row in?
+      const lvl = clamp(Math.floor((j - START_PAD) / LEVEL_LEN), 0, LEVELS - 1);
+      const holes = (j <= START_PAD) ? 0 : LEVEL_HOLES[lvl];
+      for (let i = -WIDTH; i <= WIDTH; i++) {
+        // always keep at least a guaranteed path: never hole the centre column
+        const guaranteed = (i === 0) || (j <= START_PAD) || (j >= this.courseEnd - 1);
+        if (guaranteed || Math.random() > holes) {
+          this.solid.add(i + ',' + j); cells.push([i, j]); tints.push(lvl);
+        }
       }
     }
-    // one instanced mesh for all platforms (cheap on mobile)
+
     const geo = new RoundedBoxGeometry(T * 0.95, 3, T * 0.95, 3, 0.35);
     const mat = new THREE.MeshStandardMaterial({ map: makeTileTexture(), roughness: 0.55, metalness: 0.15,
-      emissive: 0x12305a, emissiveIntensity: 0.55 });
+      emissive: 0x12305a, emissiveIntensity: 0.5 });
     const inst = new THREE.InstancedMesh(geo, mat, cells.length);
     inst.receiveShadow = true; inst.castShadow = true;
     const dummy = new THREE.Object3D();
-    // checkerboard tint for a clean designed look
-    const colA = new THREE.Color(0x2c3c5c), colB = new THREE.Color(0x1e2a42);
+    const base = new THREE.Color();
     cells.forEach(([i, j], k) => {
       dummy.position.set(i * T, -1.5, j * T); dummy.updateMatrix();
       inst.setMatrixAt(k, dummy.matrix);
-      inst.setColorAt(k, ((i + j) & 1) ? colA : colB);
+      base.set(LEVEL_TINT[tints[k]]);
+      if ((i + j) & 1) base.multiplyScalar(0.72);   // checker shading
+      inst.setColorAt(k, base);
     });
     inst.instanceMatrix.needsUpdate = true;
     if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
     this.platMesh = inst; this.scene.add(inst);
 
-    // glowing rim around each platform edge that borders a gap (neon outline)
-    this._platRims(cells);
+    this._platRims(cells, tints);
+    this._levelGates();
+    this._finishLine();
     this._scatterCoins(cells);
+    this._scatterPowerups(cells);
   }
 
-  _platRims(cells) {
+  _platRims(cells, tints) {
     if (this.rims) this.scene.remove(this.rims);
     const g = new THREE.Group();
-    const mat = new THREE.MeshBasicMaterial({ color: 0x2fd0ff });
-    const half = T * 0.47, thick = 0.25, hgt = 0.3;
+    const half = T * 0.47, thick = 0.28, hgt = 0.34;
+    // a material per level glow colour
+    const mats = LEVEL_GLOW.map((c) => new THREE.MeshBasicMaterial({ color: c }));
+    const tintOf = new Map(cells.map(([i, j], k) => [i + ',' + j, tints[k]]));
     const edge = (i, j, ni, nj, horiz) => {
-      if (this.solid.has(ni + ',' + nj)) return; // only rim edges facing a gap
+      if (this.solid.has(ni + ',' + nj)) return;
+      const mat = mats[tintOf.get(i + ',' + j) || 0];
       const m = new THREE.Mesh(new THREE.BoxGeometry(horiz ? T * 0.94 : thick, hgt, horiz ? thick : T * 0.94), mat);
-      m.position.set(i * T + (horiz ? 0 : (nj - j) * 0 + (ni - i) * half), 0.15, j * T + (horiz ? (nj - j) * half : 0));
+      m.position.set(i * T + (horiz ? 0 : (ni - i) * half), 0.16, j * T + (horiz ? (nj - j) * half : 0));
       g.add(m);
     };
     cells.forEach(([i, j]) => {
-      edge(i, j, i, j + 1, true);   // +z edge
-      edge(i, j, i, j - 1, true);   // -z edge
-      edge(i, j, i + 1, j, false);  // +x edge
-      edge(i, j, i - 1, j, false);  // -x edge
+      edge(i, j, i, j + 1, true); edge(i, j, i, j - 1, true);
+      edge(i, j, i + 1, j, false); edge(i, j, i - 1, j, false);
     });
     this.rims = g; this.scene.add(g);
   }
 
+  // a glowing arch + "LEVEL N" marker at the start of each level band
+  _levelGates() {
+    if (this.gates) this.scene.remove(this.gates);
+    const g = new THREE.Group();
+    for (let lvl = 0; lvl < LEVELS; lvl++) {
+      const z = (START_PAD + lvl * LEVEL_LEN) * T - T * 0.5;
+      const col = LEVEL_GLOW[lvl];
+      const mat = new THREE.MeshBasicMaterial({ color: col });
+      const w = (WIDTH + 0.5) * T;
+      for (const sx of [-1, 1]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.5, 5, 0.5), mat);
+        post.position.set(sx * w, 2.5, z); g.add(post);
+      }
+      const top = new THREE.Mesh(new THREE.BoxGeometry(w * 2, 0.5, 0.5), mat);
+      top.position.set(0, 5, z); g.add(top);
+      // small label tucked at the crossbar (not a giant floating sign)
+      g.add(makeLabel('LV ' + (lvl + 1), 0, 5.4, z, col, 1.7));
+    }
+    this.gates = g; this.scene.add(g);
+  }
+
+  _finishLine() {
+    if (this.finish) this.scene.remove(this.finish);
+    const g = new THREE.Group();
+    const z = this.finishZ - T * 0.5;
+    const w = (WIDTH + 0.5) * T;
+    // checkered banner
+    const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+    const cx = cv.getContext('2d');
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) { cx.fillStyle = ((x + y) & 1) ? '#fff' : '#111'; cx.fillRect(x * 16, y * 16, 16, 16); }
+    const tex = new THREE.CanvasTexture(cv); tex.wrapS = THREE.RepeatWrapping; tex.repeat.set(8, 1);
+    const banner = new THREE.Mesh(new THREE.BoxGeometry(w * 2, 1.4, 0.4),
+      new THREE.MeshBasicMaterial({ map: tex }));
+    banner.position.set(0, 6, z); g.add(banner);
+    for (const sx of [-1, 1]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.6, 6.6, 0.6), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      post.position.set(sx * w, 3.3, z); g.add(post);
+    }
+    g.add(makeLabel('FINISH', 0, 8, z, 0xffffff));
+    this.finish = g; this.scene.add(g);
+  }
+
   _scatterCoins(cells) {
-    const solidCells = cells.filter(([i, j]) => !(Math.abs(i) <= 1 && Math.abs(j) <= 1));
-    for (const c of this.coins) c.alive = false, c.mesh.visible = false;
+    const pick = cells.filter(([i, j]) => j > START_PAD + 1);
+    for (const c of this.coins) { c.alive = false; c.mesh.visible = false; }
+    let n = 0;
     for (const c of this.coins) {
-      if (!solidCells.length) break;
-      const [i, j] = solidCells[Math.floor(Math.random() * solidCells.length)];
-      c.mesh.position.set(i * T + (Math.random() - 0.5) * T * 0.4, 1.2, j * T + (Math.random() - 0.5) * T * 0.4);
+      if (n++ >= this.coins.length) break;
+      if (!pick.length) break;
+      const [i, j] = pick[Math.floor(Math.random() * pick.length)];
+      c.mesh.position.set(i * T + (Math.random() - 0.5) * T * 0.3, 1.4, j * T + (Math.random() - 0.5) * T * 0.3);
       c.alive = true; c.mesh.visible = true;
     }
+  }
+
+  // one of each power-up, spread across the later levels
+  _scatterPowerups(cells) {
+    const zoneCells = (lo, hi) => cells.filter(([i, j]) => j >= lo && j <= hi && i !== 0);
+    const zones = [
+      [START_PAD + LEVEL_LEN, START_PAD + LEVEL_LEN * 2],      // ~level 2
+      [START_PAD + LEVEL_LEN * 2, START_PAD + LEVEL_LEN * 3],  // ~level 3
+      [START_PAD + LEVEL_LEN * 3, START_PAD + LEVEL_LEN * 4],  // ~level 4
+    ];
+    const types = [PWR.SPEED, PWR.DOUBLE, PWR.SHIELD];
+    this.powerups.forEach((p, idx) => {
+      const pool = zoneCells(zones[idx][0], zones[idx][1]);
+      p.type = types[idx];
+      if (!pool.length) { p.alive = false; p.group.visible = false; return; }
+      const [i, j] = pool[Math.floor(Math.random() * pool.length)];
+      p.group.position.set(i * T, 2, j * T);
+      this._dressPowerup(p);
+      p.alive = true; p.group.visible = true;
+    });
   }
 
   isSolid(x, z) {
@@ -266,20 +390,24 @@ export class Game {
 
   _resetRun() {
     this.pos = new THREE.Vector3(0, 0, 0);   // x, y(height), z
-    this.theta = 0;                          // heading
-    this.vel = new THREE.Vector2(0, SPEED);  // horizontal velocity (x,z)
+    this.theta = 0;                          // heading (+z)
+    this.vel = new THREE.Vector2(0, BASE_SPEED);
     this.vy = 0;                             // vertical velocity
     this.airborne = false;
     this.dead = false; this.deadT = 0; this.deathKind = '';
     this.heat = 0; this.burnT = 0;
-    this.score = 0; this.dist = 0;
+    this.score = 0; this.dist = 0; this.coinCount = 0;
     this.pending = 0; this.driftTime = 0; this.mult = 1; this.notDrift = 0;
-    this.camYaw = 0;
+    this.camYaw = 0; this.won = false;
+    this.level = 1; this.boostT = 0; this.doubleT = 0; this.shield = false;
     for (const s of this.smoke) { s.life = 0; s.mesh.visible = false; }
     for (const f of this.flames) { f.life = 0; f.mesh.visible = false; }
     for (const t of this.trail) { t.life = 0; t.mesh.visible = false; }
     this.hud.setScore(0); this.hud.setHeat(0); this.hud.hideResult();
+    this.hud.setLevel(1, LEVELS); this.hud.setPowers({});
   }
+
+  get speed() { return this.boostT > 0 ? BASE_SPEED * 1.55 : BASE_SPEED; }
 
   restart() { this._buildLevel(); this._resetRun(); this.running = true; }
 
@@ -298,24 +426,36 @@ export class Game {
     if (this.dead) return this._updateDeath(dt);
 
     const steer = this.input.steer;
+    const SPEED = this.speed;   // base, or boosted by a SPEED power-up
+
+    // power-up timers
+    if (this.boostT > 0) this.boostT -= dt;
+    if (this.doubleT > 0) this.doubleT -= dt;
+    this._tickPowerups(dt);
 
     // jump (only when grounded)
     if (this.input.jump && !this.airborne) { this.vy = JUMP_V; this.airborne = true; this.audio.jump(); }
     this.input.endFrame();
 
-    // steer rotates heading; CONSTANT forward speed
+    // steer rotates heading; speed is constant (or boosted)
     this.theta += steer * TURN * dt;
     const hx = Math.sin(this.theta), hz = Math.cos(this.theta);
 
     // velocity chases heading -> the lag IS the drift (front-led slide)
     const target = new THREE.Vector2(hx * SPEED, hz * SPEED);
     this.vel.lerp(target, clamp(GRIP * dt, 0, 1));
-    if (this.vel.length() > 0.001) this.vel.setLength(SPEED); // keep speed constant
+    if (this.vel.length() > 0.001) this.vel.setLength(SPEED);
 
     // integrate horizontal
     this.pos.x += this.vel.x * dt;
     this.pos.z += this.vel.y * dt;
     this.dist += SPEED * dt;
+
+    // level progression + finish
+    const row = Math.round(this.pos.z / T);
+    const newLevel = clamp(Math.floor((row - START_PAD) / LEVEL_LEN) + 1, 1, LEVELS);
+    if (newLevel > this.level) { this.level = newLevel; this.hud.setLevel(this.level, LEVELS); this.audio.point(5); this._shake(0.3); }
+    if (this.pos.z >= this.finishZ - T && !this.won) return this._winRun();
 
     // vertical / jump arc
     if (this.airborne) {
@@ -355,14 +495,28 @@ export class Game {
       this.notDrift += dt; if (this.notDrift > 0.4) this._bank();
     }
 
-    // coins
+    // coins (x2 while a DOUBLE power-up is active)
+    const x2 = this.doubleT > 0 ? 2 : 1;
     for (const c of this.coins) {
       if (!c.alive) continue;
-      c.mesh.rotation.z += dt * 3;
+      c.mesh.rotation.z += dt * 3; c.mesh.position.y = 1.4 + Math.sin(performance.now() * 0.004 + c.mesh.position.x) * 0.2;
       const dx = c.mesh.position.x - this.pos.x, dz = c.mesh.position.z - this.pos.z;
-      if (dx * dx + dz * dz < 2.2 * 2.2 && Math.abs(this.pos.y - 0.8) < 2) {
+      if (dx * dx + dz * dz < 2.4 * 2.4 && Math.abs(this.pos.y - 0.8) < 2.2) {
         c.alive = false; c.mesh.visible = false;
-        this.score += 250; this.audio.point(3); this._shake(0.25);
+        this.coinCount++; this.score += 250 * x2; this.audio.point(3); this._shake(0.22);
+        this.hud.setCoins(this.coinCount);
+      }
+    }
+
+    // power-ups
+    for (const p of this.powerups) {
+      if (!p.alive) continue;
+      p.group.rotation.y += dt * 1.6; p.ring.rotation.z += dt * 2;
+      p.group.position.y = 2 + Math.sin(performance.now() * 0.003) * 0.3;
+      const dx = p.group.position.x - this.pos.x, dz = p.group.position.z - this.pos.z;
+      if (dx * dx + dz * dz < 2.8 * 2.8 && Math.abs(this.pos.y - 1) < 2.5) {
+        p.alive = false; p.group.visible = false;
+        this._collectPower(p.type);
       }
     }
 
@@ -402,6 +556,9 @@ export class Game {
     this.blob.position.set(this.pos.x, 0.05, this.pos.z);
     const air = clamp(1 - this.pos.y / 6, 0.25, 1);
     this.blob.scale.setScalar(air); this.blob.material.opacity = 0.45 * air;
+    // shield aura pulse
+    this.shieldMesh.visible = this.shield;
+    if (this.shield) this.shieldMesh.scale.setScalar(1 + Math.sin(performance.now() * 0.006) * 0.06);
 
     this._updateCamera(dt, driftAmt);
 
@@ -441,6 +598,15 @@ export class Game {
 
   _die(kind) {
     if (this.dead) return;
+    // SHIELD saves you from one fall: snap back onto the nearest safe tile
+    if (kind === 'fall' && this.shield) {
+      this.shield = false; this.hud.setPowers(this._powerState());
+      const i = clamp(Math.round(this.pos.x / T), -WIDTH, WIDTH);
+      const j = Math.max(START_PAD, Math.round(this.pos.z / T) - 1);
+      this.pos.set(i * T, 0, j * T); this.vy = 0; this.airborne = false;
+      this.audio.land(); this._shake(0.8);
+      return;
+    }
     this.dead = true; this.deadT = 0; this.deathKind = kind;
     this.airborne = true; this.vy = kind === 'burn' ? 4 : -2; // burn pops up, fall drops
     if (this.pending > 0) this.score += Math.floor(this.pending * this.mult);
@@ -448,6 +614,36 @@ export class Game {
     this.audio.hush();
     this.audio[kind === 'burn' ? 'ignite' : 'death']();
     this._shake(1.2);
+  }
+
+  _winRun() {
+    this.won = true; this.dead = true; this.deadT = 0; this.deathKind = 'win';
+    if (this.pending > 0) this.score += Math.floor(this.pending * this.mult);
+    this.score += Math.floor(this.dist) + 5000; // course-clear bonus
+    this.audio.hush(); this.audio.point(8); this._shake(0.6);
+    setTimeout(() => this._finish(), 700);
+  }
+
+  _collectPower(type) {
+    this.audio.point(6); this._shake(0.3);
+    if (type === PWR.SPEED) this.boostT = 5;
+    else if (type === PWR.DOUBLE) this.doubleT = 8;
+    else if (type === PWR.SHIELD) this.shield = true;
+    this.hud.setPowers(this._powerState());
+  }
+
+  _powerState() {
+    return { speed: this.boostT > 0 ? Math.ceil(this.boostT) : 0,
+             x2: this.doubleT > 0 ? Math.ceil(this.doubleT) : 0,
+             shield: this.shield };
+  }
+
+  _tickPowerups() {
+    // keep the HUD timers fresh while any are active
+    if (this.boostT > 0 || this.doubleT > 0 || this._lastShield !== this.shield) {
+      this.hud.setPowers(this._powerState());
+      this._lastShield = this.shield;
+    }
   }
 
   _updateDeath(dt) {
@@ -465,7 +661,8 @@ export class Game {
   }
 
   _bank() {
-    const gained = Math.floor(this.pending * this.mult);
+    const x2 = this.doubleT > 0 ? 2 : 1;
+    const gained = Math.floor(this.pending * this.mult) * x2;
     this.score += gained;
     this.audio.point(this.mult);
     this.hud.bankFlash(gained, this.mult);
@@ -574,6 +771,22 @@ function makePuff(strength = 0.9) {
   grd.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = grd; g.fillRect(0, 0, s, s);
   return new THREE.CanvasTexture(cv);
+}
+
+// a camera-facing text sprite (level markers, power-up icons)
+function makeLabel(text, x, y, z, color = 0xffffff, scale = 3) {
+  const s = 256; const cv = document.createElement('canvas'); cv.width = s; cv.height = 128;
+  const g = cv.getContext('2d');
+  g.font = 'bold 76px -apple-system, system-ui, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.shadowColor = '#' + new THREE.Color(color).getHexString(); g.shadowBlur = 22;
+  g.fillStyle = '#fff'; g.fillText(text, s / 2, 70);
+  g.fillStyle = '#' + new THREE.Color(color).getHexString(); g.shadowBlur = 0;
+  g.globalAlpha = 0.5; g.fillText(text, s / 2, 70); g.globalAlpha = 1;
+  const tex = new THREE.CanvasTexture(cv);
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+  spr.position.set(x, y, z); spr.scale.set(scale * 2, scale, 1);
+  return spr;
 }
 
 // platform top: subtle panel with a soft inner glow border

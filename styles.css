@@ -23,7 +23,19 @@ html, body {
   text-shadow: 0 1px 3px rgba(0,0,0,0.45), 0 2px 14px rgba(0,0,0,0.3); }
 #top { display: flex; justify-content: space-between; align-items: flex-start; }
 .score-wrap { text-align: left; }
+.level-wrap { text-align: center; }
 .best-wrap { text-align: right; }
+#level { font-size: 30px; font-weight: 800; letter-spacing: -0.5px; line-height: 0.95;
+  font-variant-numeric: tabular-nums; color: #7fe0ff; }
+.level-wrap .sub { text-align: center; }
+#coins { margin-top: 10px; font-size: 20px; font-weight: 800; letter-spacing: 0.5px; }
+
+/* active power-up chips */
+#powers { display: flex; gap: 8px; justify-content: center; margin-top: 10px; min-height: 26px; }
+.pw { padding: 4px 11px; border-radius: 20px; font-size: 13px; font-weight: 800; letter-spacing: 0.5px;
+  color: #00121a; box-shadow: 0 3px 14px rgba(0,0,0,0.4); animation: pwin 0.3s var(--ease); }
+.pw.spd { background: #36e0ff; } .pw.dbl { background: #ffd23a; } .pw.shd { background: #57ff8a; }
+@keyframes pwin { from { transform: scale(0.5); opacity: 0; } }
 #score { font-size: 44px; font-weight: 800; letter-spacing: -1.5px; line-height: 0.95;
   font-variant-numeric: tabular-nums; }
 #best { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; color: var(--muted);
