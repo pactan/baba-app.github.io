@@ -1,13 +1,29 @@
-import { Game } from './game.js?v=11';
-import { Input } from './input.js?v=11';
-import { Audio } from './audio.js?v=11';
+import { Game } from './game.js?v=12';
+import { Input } from './input.js?v=12';
+import { Audio } from './audio.js?v=12';
 
 const $ = (id) => document.getElementById(id);
 
-let lastScore = -1, lastBest = -1, lastCombo = '', lastHeat = -1;
+let lastScore = -1, lastBest = -1, lastCombo = '', lastHeat = -1, lastLevel = -1, lastCoins = -1, lastPowers = '';
 const hud = {
   setScore(v) { if (v !== lastScore) { lastScore = v; $('score').textContent = v.toLocaleString(); } },
   setBest(v) { if (v !== lastBest) { lastBest = v; $('best').textContent = v.toLocaleString(); } },
+  setLevel(n, total) {
+    if (n !== lastLevel) { lastLevel = n; $('level').textContent = n + ' / ' + total; }
+  },
+  setCoins(n) {
+    if (n !== lastCoins) { lastCoins = n; $('coins').textContent = '🪙 ' + n; }
+  },
+  setPowers(s) {
+    const key = JSON.stringify(s);
+    if (key === lastPowers) return; lastPowers = key;
+    const el = $('powers');
+    const chips = [];
+    if (s.speed) chips.push(`<span class="pw spd">» ${s.speed}s</span>`);
+    if (s.x2) chips.push(`<span class="pw dbl">x2 ${s.x2}s</span>`);
+    if (s.shield) chips.push(`<span class="pw shd">◇ SHIELD</span>`);
+    el.innerHTML = chips.join('');
+  },
   setHeat(v) {
     const pct = Math.round(v * 100);
     if (pct !== lastHeat) {
@@ -36,9 +52,10 @@ const hud = {
     $('result-score').textContent = score.toLocaleString();
     $('result-best').textContent = 'Best ' + best.toLocaleString();
     const badge = $('result-badge');
-    const label = kind === 'burn' ? 'BURNED UP 🔥' : kind === 'fall' ? 'FELL IN A GAP' : 'WIPEOUT';
-    badge.textContent = isRecord ? 'NEW RECORD' : label;
-    badge.classList.toggle('record', isRecord);
+    const label = kind === 'win' ? '🏁 COURSE CLEAR!' : kind === 'burn' ? 'BURNED UP 🔥'
+      : kind === 'fall' ? 'FELL IN A GAP' : 'WIPEOUT';
+    badge.textContent = (isRecord && kind !== 'win') ? 'NEW RECORD' : label;
+    badge.classList.toggle('record', isRecord || kind === 'win');
     $('result').classList.remove('hidden');
   },
   hideResult() { $('result').classList.add('hidden'); },
@@ -63,6 +80,7 @@ function begin() {
   try { audio.start(); } catch (e) {}
   try {
     game = new Game($('scene'), audio, input, hud);
+    window.__game = game;   // debug/test handle
     game.onError = showError;
     document.body.classList.add('playing');
     $('start').classList.add('hidden');
