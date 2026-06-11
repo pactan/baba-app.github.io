@@ -6,29 +6,38 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 
-// --- tuning ---------------------------------------------------------------
-const BASE_SPEED = 24;     // base forward speed (constant unless boosting)
-const TURN = 2.7;          // steering yaw rate (rad/s)
-const GRIP = 3.2;          // how fast velocity catches up to heading (low = more drift)
-const GRAVITY = 55;
-const JUMP_V = 17;         // jump launch velocity
-const CUBE = 2.2;          // cube size
+// --- tuning (cohesive but arcade) ------------------------------------------
+const ACCEL = 30;          // throttle acceleration
+const BRAKE = 42;          // braking deceleration
+const REV_MAX = 11;        // max reverse speed
+const MAX_SPD = 40;        // top speed
+const DRAG = 0.55;         // coast-down drag
+const TURN = 2.5;          // max steering yaw rate (rad/s)
+const TURN_REF = 12;       // speed for full steering authority
+const GRIP_LO = 7.5;       // lateral grip at low speed (tight, no parking drifts)
+const GRIP_HI = 1.9;       // lateral grip at top speed (slides — the drift)
+const GRAVITY = 50;
+const JUMP_V = 16;
 
-const T = 15;              // platform tile size
-const WIDTH = 3;           // course half-width in tiles (x from -3..3 => 7 wide)
-const LEVELS = 5;          // number of levels along the course
-const LEVEL_LEN = 11;      // tiles (in z) per level
-const START_PAD = 2;       // safe rows before level 1
-// per-level hole density + accent colour (deep -> intense as you progress)
-const LEVEL_HOLES = [0.10, 0.17, 0.24, 0.30, 0.36];
-const LEVEL_TINT = [0x2c3c5c, 0x2a4a4a, 0x46365e, 0x5e3a2e, 0x5e2e44];
-const LEVEL_GLOW = [0x2fd0ff, 0x2fffa8, 0xb46cff, 0xffa23a, 0xff4d7a];
+// rollover: sustained lateral G while gripping tips the cube over.
+// Drifting *releases* lateral force, so sliding is the safe way to corner fast.
+const TIP_G = 88;          // lateral accel threshold (vFwd * yawRate)
+const TIP_TIME = 0.3;      // must stay above threshold this long (warning lean)
+const TUMBLE_DUR = 1.15;   // how long a tumble lasts
 
-// power-up types
-const PWR = { SPEED: 0, DOUBLE: 1, SHIELD: 2 };
+const HALF = 140;          // map half-size (280 x 280 — one big map)
+const CUBE = 2.2;
+const CAM_BACK = 14, CAM_H = 9.5;
 
-const CAM_BACK = 13, CAM_H = 12; // chase camera offset
-
+// seeded PRNG so the single map is always the same map
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
 
 export class Game {
   constructor(canvas, audio, input, hud) {
@@ -43,7 +52,7 @@ export class Game {
     this.renderer.toneMappingExposure = 1.0;
 
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0x0a0e1c, 60, 165);
+    this.scene.fog = new THREE.Fog(0x0a0e1c, 70, 200);
     this._sky();
 
     try {
@@ -53,24 +62,21 @@ export class Game {
       env.dispose();
     } catch (e) {}
 
-    this.camera = new THREE.PerspectiveCamera(55, 1, 0.1, 400);
+    this.camera = new THREE.PerspectiveCamera(55, 1, 0.1, 500);
     this.camPos = new THREE.Vector3(0, CAM_H, -CAM_BACK);
     this.camLook = new THREE.Vector3();
     this.camYaw = 0;
 
     this._lights();
+    this._world();
     this._cube();
-    this._trail();
+    this._skids();
     this._smoke();
-    this._fire();
-    this._coins();
-    this._powerups();
+    this._debris();
     this._post();
 
     this.best = this._loadBest();
-    this.platforms = null;
-    this._buildLevel();
-    this._resetRun();
+    this._reset();
     this.running = false;
     this.hud.setBest(this.best);
 
@@ -79,9 +85,9 @@ export class Game {
     this._resize();
   }
 
-  // big gradient sky dome (deep blue -> dusk purple) so the world has a horizon
+  // ---------------------------------------------------------------- scene --
   _sky() {
-    const geo = new THREE.SphereGeometry(280, 32, 16);
+    const geo = new THREE.SphereGeometry(360, 32, 16);
     const mat = new THREE.ShaderMaterial({
       side: THREE.BackSide, depthWrite: false,
       uniforms: { top: { value: new THREE.Color(0x0a1230) }, bot: { value: new THREE.Color(0x2a1840) },
@@ -92,134 +98,143 @@ export class Game {
         c += glow * pow(1.0-abs(normalize(vP).y), 6.0)*0.6; gl_FragColor = vec4(c,1.0);}`,
     });
     this.scene.add(new THREE.Mesh(geo, mat));
-    // a couple of distant glowing "moons" for depth
-    for (const [x, y, z, c, r] of [[-120, 70, -160, 0x6ad0ff, 14], [150, 95, -120, 0xff7ad0, 9]]) {
-      const m = new THREE.Mesh(new THREE.SphereGeometry(r, 24, 16),
-        new THREE.MeshBasicMaterial({ color: c }));
+    for (const [x, y, z, c, r] of [[-160, 90, -220, 0x6ad0ff, 18], [200, 120, -160, 0xff7ad0, 11]]) {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(r, 24, 16), new THREE.MeshBasicMaterial({ color: c }));
       m.position.set(x, y, z); this.scene.add(m);
     }
   }
 
   _lights() {
-    this.scene.add(new THREE.HemisphereLight(0x8aa0ff, 0x0a0c16, 0.55));
-    const sun = new THREE.DirectionalLight(0xfff2e0, 2.0);
-    sun.position.set(10, 24, 8); sun.castShadow = true;
+    this.scene.add(new THREE.HemisphereLight(0x8aa0ff, 0x0a0c16, 0.5));
+    const sun = new THREE.DirectionalLight(0xfff2e0, 1.9);
+    sun.position.set(10, 26, 8); sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.near = 1; sun.shadow.camera.far = 90;
-    const d = 40; Object.assign(sun.shadow.camera, { left: -d, right: d, top: d, bottom: -d });
+    sun.shadow.camera.near = 1; sun.shadow.camera.far = 100;
+    const d = 42; Object.assign(sun.shadow.camera, { left: -d, right: d, top: d, bottom: -d });
     sun.shadow.bias = -0.0004; sun.shadow.radius = 4;
     this.scene.add(sun); this.scene.add(sun.target);
     this.sun = sun;
   }
 
+  _world() {
+    // dark asphalt with a faint neon grid (proven not to white-out under bloom)
+    const tex = makeFloorTexture();
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(46, 46);
+    tex.anisotropy = 8;
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(HALF * 2 + 140, HALF * 2 + 140),
+      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.72, metalness: 0.08 }));
+    ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; this.scene.add(ground);
+
+    // neon boundary walls
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x05122a, roughness: 0.3, metalness: 0.4, emissive: 0x2a9dff, emissiveIntensity: 2.0 });
+    for (const s of [-1, 1]) {
+      const wx = new THREE.Mesh(new THREE.BoxGeometry(HALF * 2 + 1, 2.2, 0.8), wallMat);
+      wx.position.set(0, 1.1, s * HALF); wx.castShadow = wx.receiveShadow = true; this.scene.add(wx);
+      const wz = new THREE.Mesh(new THREE.BoxGeometry(0.8, 2.2, HALF * 2 + 1), wallMat);
+      wz.position.set(s * HALF, 1.1, 0); wz.castShadow = wz.receiveShadow = true; this.scene.add(wz);
+    }
+
+    this._fixedObstacles();
+    this._movableObstacles();
+  }
+
+  // immovable: glowing blocks + pillars, placed by a fixed seed (one true map)
+  _fixedObstacles() {
+    this.fixed = [];
+    const rnd = mulberry32(1337);
+    const blockMat = new THREE.MeshStandardMaterial({ color: 0x141a2a, roughness: 0.4, metalness: 0.3, emissive: 0x2a9dff, emissiveIntensity: 1.2 });
+    const pillarMat = new THREE.MeshStandardMaterial({ color: 0x0a0e18, roughness: 0.3, metalness: 0.4, emissive: 0xff2a6d, emissiveIntensity: 1.5 });
+    for (let k = 0; k < 16; k++) {
+      const x = (rnd() * 2 - 1) * (HALF - 18);
+      const z = (rnd() * 2 - 1) * (HALF - 18);
+      if (Math.hypot(x - 0, z - (-HALF + 24)) < 30) continue;  // keep spawn clear
+      if (k % 3 === 2) {
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.9, 7, 16), pillarMat);
+        m.position.set(x, 3.5, z); m.castShadow = true; this.scene.add(m);
+        this.fixed.push({ x, z, r: 2.4, h: 7 });
+      } else {
+        const w = 5 + rnd() * 6, d = 5 + rnd() * 6, h = 3.5 + rnd() * 3.5;
+        const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 3, 0.2), blockMat);
+        m.position.set(x, h / 2, z); m.castShadow = m.receiveShadow = true; this.scene.add(m);
+        this.fixed.push({ x, z, r: Math.max(w, d) * 0.5 + 0.6, h });
+      }
+    }
+  }
+
+  // movable: crates, barrels, cones — get knocked flying when hit
+  _movableObstacles() {
+    this.movables = [];
+    const rnd = mulberry32(4242);
+    const crateMat = new THREE.MeshStandardMaterial({ map: makeWoodTexture('#7a5a30', '#5e441f'), roughness: 0.7 });
+    const barrelMat = new THREE.MeshStandardMaterial({ color: 0x2255cc, roughness: 0.35, metalness: 0.5, emissive: 0x113077, emissiveIntensity: 0.5 });
+    const coneMat = new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: 0.55, emissive: 0x5a2400, emissiveIntensity: 0.5 });
+    for (let k = 0; k < 30; k++) {
+      const x = (rnd() * 2 - 1) * (HALF - 12);
+      const z = (rnd() * 2 - 1) * (HALF - 12);
+      if (Math.hypot(x - 0, z - (-HALF + 24)) < 22) continue;  // keep spawn clear
+      let mesh, r, h;
+      const kind = k % 3;
+      if (kind === 0) { mesh = new THREE.Mesh(new RoundedBoxGeometry(2.2, 2.2, 2.2, 3, 0.14), crateMat); mesh.position.set(x, 1.1, z); r = 1.6; h = 2.2; }
+      else if (kind === 1) { mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 2.4, 14), barrelMat); mesh.position.set(x, 1.2, z); r = 1.3; h = 2.4; }
+      else { mesh = new THREE.Mesh(new THREE.ConeGeometry(0.7, 1.7, 14), coneMat); mesh.position.set(x, 0.85, z); r = 1.0; h = 1.7; }
+      mesh.rotation.y = rnd() * 6;
+      mesh.castShadow = true; this.scene.add(mesh);
+      this.movables.push({ mesh, x, z, r, h, vx: 0, vz: 0, vy: 0, spin: 0, knocked: false });
+    }
+  }
+
   _cube() {
     this.cube = new THREE.Group();
     this.cube.rotation.order = 'YXZ';
-    this.woodMat = new THREE.MeshStandardMaterial({ map: makeWoodTexture(), roughness: 0.65, metalness: 0.0,
-      emissive: 0xff2200, emissiveIntensity: 0 });
-    const geo = new RoundedBoxGeometry(CUBE, CUBE, CUBE, 5, 0.16);
-    const box = new THREE.Mesh(geo, this.woodMat);
-    box.castShadow = true; box.position.y = CUBE / 2;
-    this.cube.add(box);
-    // crisp dark edge outline (reads great against the bright platforms)
+    this.woodMat = new THREE.MeshStandardMaterial({ map: makeWoodTexture(), roughness: 0.65, metalness: 0.0 });
+    const box = new THREE.Mesh(new RoundedBoxGeometry(CUBE, CUBE, CUBE, 5, 0.16), this.woodMat);
+    box.castShadow = true; box.position.y = CUBE / 2; this.cube.add(box);
     const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(CUBE, CUBE, CUBE)),
       new THREE.LineBasicMaterial({ color: 0x2a1c0e }));
     edges.position.y = CUBE / 2; this.cube.add(edges);
-    // front marker
     const nose = new THREE.Mesh(new THREE.BoxGeometry(CUBE * 0.5, 0.14, 0.22),
       new THREE.MeshStandardMaterial({ color: 0x120c06, roughness: 0.6 }));
     nose.position.set(0, CUBE * 0.5, CUBE * 0.5 + 0.01); this.cube.add(nose);
-    // shield aura (shown only while a SHIELD power-up is held)
-    this.shieldMesh = new THREE.Mesh(new THREE.SphereGeometry(CUBE * 1.1, 20, 16),
-      new THREE.MeshBasicMaterial({ color: 0x57ff8a, transparent: true, opacity: 0.22, depthWrite: false }));
-    this.shieldMesh.position.y = CUBE / 2; this.shieldMesh.visible = false; this.cube.add(this.shieldMesh);
     this.scene.add(this.cube);
-    // soft contact shadow blob (kept flat on the ground, not parented to cube)
+
     this.blob = new THREE.Mesh(new THREE.PlaneGeometry(CUBE * 1.7, CUBE * 1.7),
       new THREE.MeshBasicMaterial({ map: makePuff(0.7), color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false }));
     this.blob.rotation.x = -Math.PI / 2; this.scene.add(this.blob);
   }
 
-  // drift trail: a recycled pool of dark scorch quads laid on the platforms
-  _trail() {
-    const geo = new THREE.PlaneGeometry(1, 1);
-    this.trail = [];
-    for (let i = 0; i < 160; i++) {
-      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-        color: 0x120a08, transparent: true, opacity: 0, depthWrite: false }));
+  _skids() {
+    const geo = new THREE.PlaneGeometry(0.5, 1.6);
+    this.skids = [];
+    for (let i = 0; i < 200; i++) {
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x0a0705, transparent: true, opacity: 0, depthWrite: false }));
       m.rotation.x = -Math.PI / 2; m.visible = false; this.scene.add(m);
-      this.trail.push({ mesh: m, life: 0 });
+      this.skids.push({ mesh: m, life: 0 });
     }
-    this.trailCursor = 0; this.trailTimer = 0;
+    this.skidCursor = 0; this.skidTimer = 0;
   }
 
   _smoke() {
     const tex = makePuff(0.8);
     this.smoke = [];
-    for (let i = 0; i < 48; i++) {
+    for (let i = 0; i < 64; i++) {
       const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
-        new THREE.MeshBasicMaterial({ map: tex, color: 0x555555, transparent: true, opacity: 0, depthWrite: false }));
+        new THREE.MeshBasicMaterial({ map: tex, color: 0x999999, transparent: true, opacity: 0, depthWrite: false }));
       m.visible = false; this.scene.add(m);
       this.smoke.push({ mesh: m, life: 0, vx: 0, vy: 0, vz: 0, size: 1 });
     }
-    this.smokeCursor = 0;
+    this.smokeCursor = 0; this.dustTimer = 0; this.driftSmokeTimer = 0;
   }
 
-  _fire() {
-    const tex = makePuff(1.0);
-    this.fireMat = new THREE.MeshBasicMaterial({ map: tex, color: 0xff7a18, transparent: true, opacity: 0,
-      blending: THREE.AdditiveBlending, depthWrite: false });
-    this.flames = [];
-    for (let i = 0; i < 40; i++) {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.fireMat.clone());
+  _debris() {
+    this.debris = [];
+    for (let i = 0; i < 36; i++) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 }));
       m.visible = false; this.scene.add(m);
-      this.flames.push({ mesh: m, life: 0, vx: 0, vy: 0, vz: 0, size: 1 });
+      this.debris.push({ mesh: m, life: 0, vx: 0, vy: 0, vz: 0 });
     }
-    this.fireCursor = 0;
-    // light that flares when ablaze
-    this.fireLight = new THREE.PointLight(0xff6014, 0, 16, 2);
-    this.scene.add(this.fireLight);
-  }
-
-  _coins() {
-    this.coins = [];
-    const geo = new THREE.TorusGeometry(0.6, 0.22, 10, 18);
-    const mat = new THREE.MeshStandardMaterial({ color: 0xffd23a, roughness: 0.3, metalness: 0.6, emissive: 0xffae00, emissiveIntensity: 0.7 });
-    for (let i = 0; i < 14; i++) {
-      const m = new THREE.Mesh(geo, mat); m.rotation.x = Math.PI / 2; m.castShadow = true;
-      m.visible = false; this.scene.add(m);
-      this.coins.push({ mesh: m, alive: false });
-    }
-  }
-
-  // 3 collectible power-ups: a floating glowing icon-cube in a ring
-  _powerups() {
-    this.powerups = [];
-    for (let i = 0; i < 3; i++) {
-      const grp = new THREE.Group();
-      const core = new THREE.Mesh(new RoundedBoxGeometry(1.6, 1.6, 1.6, 4, 0.2),
-        new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.25, metalness: 0.3, emissive: 0xffffff, emissiveIntensity: 0.8 }));
-      grp.add(core);
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.12, 8, 28),
-        new THREE.MeshBasicMaterial({ color: 0xffffff }));
-      ring.rotation.x = Math.PI / 2; grp.add(ring);
-      grp.visible = false; this.scene.add(grp);
-      this.powerups.push({ group: grp, core, ring, alive: false, type: 0 });
-    }
-  }
-
-  _dressPowerup(p) {
-    // colour + icon by type
-    const cfg = {
-      [PWR.SPEED]:  { c: 0x36e0ff, label: '»' },
-      [PWR.DOUBLE]: { c: 0xffd23a, label: 'x2' },
-      [PWR.SHIELD]: { c: 0x57ff8a, label: '◇' },
-    }[p.type];
-    p.core.material.color.setHex(cfg.c); p.core.material.emissive.setHex(cfg.c);
-    p.ring.material.color.setHex(cfg.c);
-    if (p.label) p.group.remove(p.label);
-    p.label = makeLabel(cfg.label, 0, 1.7, 0, cfg.c, 2.2);
-    p.group.add(p.label);
+    this.debrisCursor = 0;
   }
 
   async _post() {
@@ -238,180 +253,21 @@ export class Game {
     } catch (e) { this.composer = null; }
   }
 
-  // --- COURSE: 5 levels laid end-to-end along +z. Each level is a band of
-  // rows; gaps get denser and the accent colour shifts per level. A finish
-  // line caps the course. ---
-  _buildLevel() {
-    if (this.platMesh) { this.scene.remove(this.platMesh); this.platMesh.geometry.dispose(); }
-    this.solid = new Set();
-    const cells = [];
-    const tints = [];
-    // course runs from row 0 to row END in z; x spans -WIDTH..WIDTH
-    this.courseEnd = START_PAD + LEVELS * LEVEL_LEN;     // last row index
-    this.finishZ = this.courseEnd * T;
-    for (let j = -START_PAD; j <= this.courseEnd; j++) {
-      // which level is this row in?
-      const lvl = clamp(Math.floor((j - START_PAD) / LEVEL_LEN), 0, LEVELS - 1);
-      const holes = (j <= START_PAD) ? 0 : LEVEL_HOLES[lvl];
-      for (let i = -WIDTH; i <= WIDTH; i++) {
-        // always keep at least a guaranteed path: never hole the centre column
-        const guaranteed = (i === 0) || (j <= START_PAD) || (j >= this.courseEnd - 1);
-        if (guaranteed || Math.random() > holes) {
-          this.solid.add(i + ',' + j); cells.push([i, j]); tints.push(lvl);
-        }
-      }
-    }
-
-    const geo = new RoundedBoxGeometry(T * 0.95, 3, T * 0.95, 3, 0.35);
-    const mat = new THREE.MeshStandardMaterial({ map: makeTileTexture(), roughness: 0.55, metalness: 0.15,
-      emissive: 0x12305a, emissiveIntensity: 0.5 });
-    const inst = new THREE.InstancedMesh(geo, mat, cells.length);
-    inst.receiveShadow = true; inst.castShadow = true;
-    const dummy = new THREE.Object3D();
-    const base = new THREE.Color();
-    cells.forEach(([i, j], k) => {
-      dummy.position.set(i * T, -1.5, j * T); dummy.updateMatrix();
-      inst.setMatrixAt(k, dummy.matrix);
-      base.set(LEVEL_TINT[tints[k]]);
-      if ((i + j) & 1) base.multiplyScalar(0.72);   // checker shading
-      inst.setColorAt(k, base);
-    });
-    inst.instanceMatrix.needsUpdate = true;
-    if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
-    this.platMesh = inst; this.scene.add(inst);
-
-    this._platRims(cells, tints);
-    this._levelGates();
-    this._finishLine();
-    this._scatterCoins(cells);
-    this._scatterPowerups(cells);
-  }
-
-  _platRims(cells, tints) {
-    if (this.rims) this.scene.remove(this.rims);
-    const g = new THREE.Group();
-    const half = T * 0.47, thick = 0.28, hgt = 0.34;
-    // a material per level glow colour
-    const mats = LEVEL_GLOW.map((c) => new THREE.MeshBasicMaterial({ color: c }));
-    const tintOf = new Map(cells.map(([i, j], k) => [i + ',' + j, tints[k]]));
-    const edge = (i, j, ni, nj, horiz) => {
-      if (this.solid.has(ni + ',' + nj)) return;
-      const mat = mats[tintOf.get(i + ',' + j) || 0];
-      const m = new THREE.Mesh(new THREE.BoxGeometry(horiz ? T * 0.94 : thick, hgt, horiz ? thick : T * 0.94), mat);
-      m.position.set(i * T + (horiz ? 0 : (ni - i) * half), 0.16, j * T + (horiz ? (nj - j) * half : 0));
-      g.add(m);
-    };
-    cells.forEach(([i, j]) => {
-      edge(i, j, i, j + 1, true); edge(i, j, i, j - 1, true);
-      edge(i, j, i + 1, j, false); edge(i, j, i - 1, j, false);
-    });
-    this.rims = g; this.scene.add(g);
-  }
-
-  // a glowing arch + "LEVEL N" marker at the start of each level band
-  _levelGates() {
-    if (this.gates) this.scene.remove(this.gates);
-    const g = new THREE.Group();
-    for (let lvl = 0; lvl < LEVELS; lvl++) {
-      const z = (START_PAD + lvl * LEVEL_LEN) * T - T * 0.5;
-      const col = LEVEL_GLOW[lvl];
-      const mat = new THREE.MeshBasicMaterial({ color: col });
-      const w = (WIDTH + 0.5) * T;
-      for (const sx of [-1, 1]) {
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.5, 5, 0.5), mat);
-        post.position.set(sx * w, 2.5, z); g.add(post);
-      }
-      const top = new THREE.Mesh(new THREE.BoxGeometry(w * 2, 0.5, 0.5), mat);
-      top.position.set(0, 5, z); g.add(top);
-      // small label tucked at the crossbar (not a giant floating sign)
-      g.add(makeLabel('LV ' + (lvl + 1), 0, 5.4, z, col, 1.7));
-    }
-    this.gates = g; this.scene.add(g);
-  }
-
-  _finishLine() {
-    if (this.finish) this.scene.remove(this.finish);
-    const g = new THREE.Group();
-    const z = this.finishZ - T * 0.5;
-    const w = (WIDTH + 0.5) * T;
-    // checkered banner
-    const cv = document.createElement('canvas'); cv.width = cv.height = 64;
-    const cx = cv.getContext('2d');
-    for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) { cx.fillStyle = ((x + y) & 1) ? '#fff' : '#111'; cx.fillRect(x * 16, y * 16, 16, 16); }
-    const tex = new THREE.CanvasTexture(cv); tex.wrapS = THREE.RepeatWrapping; tex.repeat.set(8, 1);
-    const banner = new THREE.Mesh(new THREE.BoxGeometry(w * 2, 1.4, 0.4),
-      new THREE.MeshBasicMaterial({ map: tex }));
-    banner.position.set(0, 6, z); g.add(banner);
-    for (const sx of [-1, 1]) {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.6, 6.6, 0.6), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-      post.position.set(sx * w, 3.3, z); g.add(post);
-    }
-    g.add(makeLabel('FINISH', 0, 8, z, 0xffffff));
-    this.finish = g; this.scene.add(g);
-  }
-
-  _scatterCoins(cells) {
-    const pick = cells.filter(([i, j]) => j > START_PAD + 1);
-    for (const c of this.coins) { c.alive = false; c.mesh.visible = false; }
-    let n = 0;
-    for (const c of this.coins) {
-      if (n++ >= this.coins.length) break;
-      if (!pick.length) break;
-      const [i, j] = pick[Math.floor(Math.random() * pick.length)];
-      c.mesh.position.set(i * T + (Math.random() - 0.5) * T * 0.3, 1.4, j * T + (Math.random() - 0.5) * T * 0.3);
-      c.alive = true; c.mesh.visible = true;
-    }
-  }
-
-  // one of each power-up, spread across the later levels
-  _scatterPowerups(cells) {
-    const zoneCells = (lo, hi) => cells.filter(([i, j]) => j >= lo && j <= hi && i !== 0);
-    const zones = [
-      [START_PAD + LEVEL_LEN, START_PAD + LEVEL_LEN * 2],      // ~level 2
-      [START_PAD + LEVEL_LEN * 2, START_PAD + LEVEL_LEN * 3],  // ~level 3
-      [START_PAD + LEVEL_LEN * 3, START_PAD + LEVEL_LEN * 4],  // ~level 4
-    ];
-    const types = [PWR.SPEED, PWR.DOUBLE, PWR.SHIELD];
-    this.powerups.forEach((p, idx) => {
-      const pool = zoneCells(zones[idx][0], zones[idx][1]);
-      p.type = types[idx];
-      if (!pool.length) { p.alive = false; p.group.visible = false; return; }
-      const [i, j] = pool[Math.floor(Math.random() * pool.length)];
-      p.group.position.set(i * T, 2, j * T);
-      this._dressPowerup(p);
-      p.alive = true; p.group.visible = true;
-    });
-  }
-
-  isSolid(x, z) {
-    const i = Math.round(x / T), j = Math.round(z / T);
-    return this.solid.has(i + ',' + j);
-  }
-
-  _resetRun() {
-    this.pos = new THREE.Vector3(0, 0, 0);   // x, y(height), z
-    this.theta = 0;                          // heading (+z)
-    this.vel = new THREE.Vector2(0, BASE_SPEED);
-    this.vy = 0;                             // vertical velocity
-    this.airborne = false;
-    this.dead = false; this.deadT = 0; this.deathKind = '';
-    this.heat = 0; this.burnT = 0;
-    this.score = 0; this.dist = 0; this.coinCount = 0;
+  // ---------------------------------------------------------------- state --
+  _reset() {
+    this.pos = new THREE.Vector3(0, 0, -HALF + 24);
+    this.theta = 0;
+    this.vel = new THREE.Vector2(0, 0);
+    this.vy = 0; this.airborne = false;
+    this.score = 0;
     this.pending = 0; this.driftTime = 0; this.mult = 1; this.notDrift = 0;
-    this.camYaw = 0; this.won = false;
-    this.level = 1; this.boostT = 0; this.doubleT = 0; this.shield = false;
-    for (const s of this.smoke) { s.life = 0; s.mesh.visible = false; }
-    for (const f of this.flames) { f.life = 0; f.mesh.visible = false; }
-    for (const t of this.trail) { t.life = 0; t.mesh.visible = false; }
-    this.hud.setScore(0); this.hud.setHeat(0); this.hud.hideResult();
-    this.hud.setLevel(1, LEVELS); this.hud.setPowers({});
+    this.tipTimer = 0;
+    this.tumbling = false; this.tumbleT = 0; this.tumbleAxis = 'z'; this.tumbleDir = 1;
+    this.camYaw = 0; this.shakeAmt = 0;
+    this.hud.setScore(0);
   }
 
-  get speed() { return this.boostT > 0 ? BASE_SPEED * 1.55 : BASE_SPEED; }
-
-  restart() { this._buildLevel(); this._resetRun(); this.running = true; }
-
-  start() { this._resetRun(); this.running = true; this.clock.getDelta(); this._loop(); }
+  start() { this._reset(); this.running = true; this.clock.getDelta(); this._loop(); }
 
   _loop() {
     requestAnimationFrame(() => this._loop());
@@ -422,314 +278,335 @@ export class Game {
     } catch (e) { this.running = false; if (this.onError) this.onError(e); }
   }
 
+  // --------------------------------------------------------------- update --
   _update(dt) {
-    if (this.dead) return this._updateDeath(dt);
+    if (this.tumbling) return this._updateTumble(dt);
 
     const steer = this.input.steer;
-    const SPEED = this.speed;   // base, or boosted by a SPEED power-up
+    const gas = this.input.gas, brake = this.input.brake;
 
-    // power-up timers
-    if (this.boostT > 0) this.boostT -= dt;
-    if (this.doubleT > 0) this.doubleT -= dt;
-    this._tickPowerups(dt);
-
-    // jump (only when grounded)
+    // jump (grounded only)
     if (this.input.jump && !this.airborne) { this.vy = JUMP_V; this.airborne = true; this.audio.jump(); }
     this.input.endFrame();
 
-    // steer rotates heading; speed is constant (or boosted)
-    this.theta += steer * TURN * dt;
-    const hx = Math.sin(this.theta), hz = Math.cos(this.theta);
+    // steering first: rotate the heading, then split the OLD velocity in the
+    // NEW frame — the heading change leaves the velocity behind, and that lag
+    // IS the lateral slip that grip then fights (or doesn't => drift).
+    const fwd0 = this.vel.x * Math.sin(this.theta) + this.vel.y * Math.cos(this.theta);
+    const authority = clamp(Math.abs(fwd0) / TURN_REF, 0, 1) * (this.airborne ? 0.35 : 1);
+    const yawRate = steer * TURN * authority * (fwd0 >= 0 ? 1 : -1);
+    this.theta += yawRate * dt;
 
-    // velocity chases heading -> the lag IS the drift (front-led slide)
-    const target = new THREE.Vector2(hx * SPEED, hz * SPEED);
-    this.vel.lerp(target, clamp(GRIP * dt, 0, 1));
-    if (this.vel.length() > 0.001) this.vel.setLength(SPEED);
+    const sn = Math.sin(this.theta), cs = Math.cos(this.theta);
+    let vFwd = this.vel.x * sn + this.vel.y * cs;
+    let vLat = this.vel.x * cs - this.vel.y * sn;
 
-    // integrate horizontal
+    // throttle / brake / reverse / drag
+    if (gas) vFwd += ACCEL * dt;
+    if (brake) vFwd -= (vFwd > 0.5 ? BRAKE : ACCEL * 0.7) * dt;   // brake, then slow reverse
+    vFwd -= vFwd * DRAG * dt;
+    vFwd = clamp(vFwd, -REV_MAX, MAX_SPD);
+
+    const speed01 = clamp(Math.abs(vFwd) / MAX_SPD, 0, 1);
+
+    // lateral grip: tight at low speed, loose at high speed => natural drift
+    const grip = this.airborne ? 0.2 : lerp(GRIP_LO, GRIP_HI, speed01);
+    vLat -= vLat * clamp(grip * dt, 0, 1);
+
+    // drift measure from slip angle
+    const slipDeg = Math.abs(Math.atan2(vLat, Math.max(Math.abs(vFwd), 0.5))) * 180 / Math.PI;
+    const drifting = !this.airborne && Math.abs(vFwd) > 8 && slipDeg > 8;
+    const driftAmt = drifting ? clamp((slipDeg - 8) / 32, 0, 1) : 0;
+
+    // --- rollover from inertia: full-lock steering near top speed flips you.
+    // Feather the steering or brake before hard corners — or you roll.
+    const latG = Math.abs(vFwd * yawRate);
+    if (!this.airborne && latG > TIP_G) {
+      this.tipTimer += dt;
+      if (this.tipTimer > TIP_TIME) return this._startTumble('z', steer >= 0 ? -1 : 1);
+    } else this.tipTimer = Math.max(0, this.tipTimer - dt * 2);
+
+    // recompose (same frame) + integrate
+    this.vel.set(vFwd * sn + vLat * cs, vFwd * cs - vLat * sn);
     this.pos.x += this.vel.x * dt;
     this.pos.z += this.vel.y * dt;
-    this.dist += SPEED * dt;
 
-    // level progression + finish
-    const row = Math.round(this.pos.z / T);
-    const newLevel = clamp(Math.floor((row - START_PAD) / LEVEL_LEN) + 1, 1, LEVELS);
-    if (newLevel > this.level) { this.level = newLevel; this.hud.setLevel(this.level, LEVELS); this.audio.point(5); this._shake(0.3); }
-    if (this.pos.z >= this.finishZ - T && !this.won) return this._winRun();
+    // walls
+    for (const ax of ['x', 'z']) {
+      const v = ax === 'x' ? 'x' : 'y';
+      if (this.pos[ax] > HALF - 1.4) { this.pos[ax] = HALF - 1.4; this._wallHit(v); }
+      if (this.pos[ax] < -(HALF - 1.4)) { this.pos[ax] = -(HALF - 1.4); this._wallHit(v); }
+    }
 
-    // vertical / jump arc
+    // vertical
     if (this.airborne) {
       this.vy -= GRAVITY * dt;
       this.pos.y += this.vy * dt;
-      if (this.pos.y <= 0) {
-        this.pos.y = 0; this.airborne = false; this.vy = 0;
-        if (this.isSolid(this.pos.x, this.pos.z)) this.audio.land();
-        else return this._die('fall');           // landed in a gap
-      }
-    } else {
-      // grounded: if we've rolled off a platform into a gap -> fall
-      if (!this.isSolid(this.pos.x, this.pos.z)) return this._die('fall');
+      if (this.pos.y <= 0) { this.pos.y = 0; this.vy = 0; this.airborne = false; this.audio.land(); this._shake(0.15); }
     }
 
-    // --- drift / friction ---
-    const moveAng = Math.atan2(this.vel.x, this.vel.y);
-    let slip = Math.abs(moveAng - this.theta);
-    if (slip > Math.PI) slip = Math.abs(slip - 2 * Math.PI);
-    const slipDeg = slip * 180 / Math.PI;
-    const drifting = !this.airborne && slipDeg > 7;
-    const driftAmt = drifting ? clamp((slipDeg - 7) / 40, 0, 1) : 0;
+    this._collideFixed();
+    this._collideMovables();
+    if (this.tumbling) return;   // a collision may have started a tumble
 
-    // friction heat builds while drifting, cools otherwise. smoke -> fire.
-    this.heat = clamp(this.heat + (driftAmt * 0.9 - 0.45) * dt, 0, 1);
-    this.woodMat.emissiveIntensity = this.heat > 0.6 ? (this.heat - 0.6) * 2.4 : 0;
-    if (this.heat >= 0.999) { this.burnT += dt; if (this.burnT > 3) return this._die('burn'); }
-    else this.burnT = Math.max(0, this.burnT - dt);
-
-    // scoring: drift to build a combo that banks when you straighten
+    // --- drift scoring (combo banks when you straighten) ---
     if (drifting) {
       this.driftTime += dt; this.notDrift = 0;
-      this.mult = clamp(1 + Math.floor(this.driftTime / 1.1), 1, 9);
-      this.pending += SPEED * driftAmt * dt * 5;
+      this.mult = clamp(1 + Math.floor(this.driftTime / 1.2), 1, 9);
+      this.pending += Math.abs(vFwd) * driftAmt * dt * 5;
       this.hud.setCombo(this.mult, Math.floor(this.pending * this.mult), true);
     } else if (this.pending > 0) {
-      this.notDrift += dt; if (this.notDrift > 0.4) this._bank();
+      this.notDrift += dt; if (this.notDrift > 0.45) this._bank();
     }
 
-    // coins (x2 while a DOUBLE power-up is active)
-    const x2 = this.doubleT > 0 ? 2 : 1;
-    for (const c of this.coins) {
-      if (!c.alive) continue;
-      c.mesh.rotation.z += dt * 3; c.mesh.position.y = 1.4 + Math.sin(performance.now() * 0.004 + c.mesh.position.x) * 0.2;
-      const dx = c.mesh.position.x - this.pos.x, dz = c.mesh.position.z - this.pos.z;
-      if (dx * dx + dz * dz < 2.4 * 2.4 && Math.abs(this.pos.y - 0.8) < 2.2) {
-        c.alive = false; c.mesh.visible = false;
-        this.coinCount++; this.score += 250 * x2; this.audio.point(3); this._shake(0.22);
-        this.hud.setCoins(this.coinCount);
+    // --- friction dust (always when rolling) + drift smoke (more with speed) --
+    if (!this.airborne && Math.abs(vFwd) > 4) {
+      this.dustTimer += dt;
+      if (this.dustTimer > lerp(0.12, 0.05, speed01)) { this.dustTimer = 0; this._emitSmoke(0.10 + speed01 * 0.06, 0.7, 0x777777); }
+    }
+    if (driftAmt > 0.15) {
+      this.driftSmokeTimer += dt;
+      const rate = lerp(0.05, 0.018, speed01);      // faster = denser smoke
+      if (this.driftSmokeTimer > rate) {
+        this.driftSmokeTimer = 0;
+        const o = driftAmt * (0.35 + speed01 * 0.45); // faster = thicker smoke
+        this._emitSmoke(o, 1.1 + speed01 * 0.7, 0xbbbbbb);
+        this._emitSmoke(o * 0.8, 0.9 + speed01 * 0.5, 0xa9a9a9);
       }
+      this.skidTimer += dt;
+      if (this.skidTimer > 0.022) { this.skidTimer = 0; this._dropSkid(); }
     }
+    this._updateSmoke(dt); this._fadeSkids(dt); this._updateDebris(dt); this._updateMovables(dt);
 
-    // power-ups
-    for (const p of this.powerups) {
-      if (!p.alive) continue;
-      p.group.rotation.y += dt * 1.6; p.ring.rotation.z += dt * 2;
-      p.group.position.y = 2 + Math.sin(performance.now() * 0.003) * 0.3;
-      const dx = p.group.position.x - this.pos.x, dz = p.group.position.z - this.pos.z;
-      if (dx * dx + dz * dz < 2.8 * 2.8 && Math.abs(this.pos.y - 1) < 2.5) {
-        p.alive = false; p.group.visible = false;
-        this._collectPower(p.type);
-      }
-    }
-
-    // lay a drift trail on the ground while sliding
-    if (driftAmt > 0.1 && !this.airborne) {
-      this.trailTimer += dt;
-      if (this.trailTimer > 0.02) {
-        this.trailTimer = 0;
-        const t = this.trail[this.trailCursor]; this.trailCursor = (this.trailCursor + 1) % this.trail.length;
-        t.mesh.position.set(this.pos.x, 0.06, this.pos.z);
-        t.mesh.rotation.z = Math.atan2(this.vel.x, this.vel.y);
-        t.mesh.scale.set(0.8 + driftAmt * 0.6, 2.4, 1);
-        t.life = 1; t.mesh.visible = true;
-        const warm = this.heat;  // trail glows warmer as it heats up
-        t.mesh.material.color.setRGB(0.07 + warm * 0.5, 0.04 + warm * 0.06, 0.03);
-      }
-    }
-    this._fadeTrail(dt);
-
-    // emit smoke/fire from friction heat
-    if (this.heat > 0.35) {
-      this.smokeTimer = (this.smokeTimer || 0) + dt;
-      if (this.smokeTimer > 0.03) { this.smokeTimer = 0; this._emitSmoke(this.heat); }
-    }
-    if (this.heat > 0.7) this._emitFlame(this.heat);
-    this._updateSmoke(dt); this._updateFlames(dt);
-    this.fireLight.position.set(this.pos.x, this.pos.y + 1.5, this.pos.z);
-    this.fireLight.intensity = lerp(this.fireLight.intensity, this.heat > 0.7 ? (this.heat - 0.7) * 18 : 0, Math.min(1, dt * 8));
-
-    // place cube + lean into the slide
+    // --- place cube: lean into the slide, wobble near tip threshold ---
     this.cube.position.set(this.pos.x, this.pos.y, this.pos.z);
     this.cube.rotation.y = this.theta;
-    const lean = clamp(-steer * driftAmt * 0.5, -0.4, 0.4);
-    this.cube.rotation.z = lerp(this.cube.rotation.z, lean, Math.min(1, dt * 10));
-    this.cube.rotation.x = lerp(this.cube.rotation.x, this.airborne ? -0.15 : 0, Math.min(1, dt * 8));
-    // contact shadow shrinks/fades as the cube jumps
+    const tipWarn = clamp(this.tipTimer / TIP_TIME, 0, 1);
+    const leanZ = clamp(-vLat * 0.045, -0.35, 0.35) - steer * tipWarn * 0.25;
+    this.cube.rotation.z = lerp(this.cube.rotation.z, leanZ, Math.min(1, dt * 10));
+    this.cube.rotation.x = lerp(this.cube.rotation.x, this.airborne ? -0.15 : (gas ? -0.03 : brake ? 0.05 : 0), Math.min(1, dt * 8));
     this.blob.position.set(this.pos.x, 0.05, this.pos.z);
     const air = clamp(1 - this.pos.y / 6, 0.25, 1);
     this.blob.scale.setScalar(air); this.blob.material.opacity = 0.45 * air;
-    // shield aura pulse
-    this.shieldMesh.visible = this.shield;
-    if (this.shield) this.shieldMesh.scale.setScalar(1 + Math.sin(performance.now() * 0.006) * 0.06);
 
-    this._updateCamera(dt, driftAmt);
+    this._updateCamera(dt, speed01, driftAmt);
 
-    this.audio.roll01(0.5);
-    this.audio.screech(driftAmt);
-    this.audio.fire(this.heat > 0.7 ? (this.heat - 0.7) / 0.3 : 0);
+    this.audio.engine(speed01, gas);
+    this.audio.screech(driftAmt * clamp(Math.abs(vFwd) / 12, 0, 1));
 
-    // score = banked drift/coins + distance survived (always ticking up)
-    this.hud.setScore(this.score + Math.floor(this.dist));
-    this.hud.setHeat(this.heat);
+    if (this.score > this.best) { this.best = this.score; this._saveBest(this.best); this.hud.setBest(this.best); }
+    this.hud.setScore(this.score);
   }
 
-  _updateCamera(dt, driftAmt) {
-    this.shakeAmt = (this.shakeAmt || 0) * Math.pow(0.0001, dt);
-    // smooth the camera yaw toward heading so it doesn't whip around
-    let d = this.theta - this.camYaw;
-    while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
-    this.camYaw += d * Math.min(1, dt * 3.5);
-    const bx = Math.sin(this.camYaw), bz = Math.cos(this.camYaw);
-    const sx = (Math.random() - 0.5) * this.shakeAmt, sz = (Math.random() - 0.5) * this.shakeAmt;
-    const want = new THREE.Vector3(
-      this.pos.x - bx * CAM_BACK + sx, CAM_H + this.pos.y * 0.5, this.pos.z - bz * CAM_BACK + sz);
-    this.camPos.lerp(want, 1 - Math.exp(-dt * 6));
-    this.camLook.lerp(new THREE.Vector3(this.pos.x + bx * 6, this.pos.y + 1.5, this.pos.z + bz * 6), 1 - Math.exp(-dt * 6));
-    this.camera.position.copy(this.camPos);
-    this.camera.lookAt(this.camLook);
-    const wantFov = 55 + driftAmt * 8;
-    this.camera.fov += (wantFov - this.camera.fov) * Math.min(1, dt * 4);
-    this.camera.updateProjectionMatrix();
-
-    this.sun.position.set(this.pos.x + 10, 24, this.pos.z + 8);
-    this.sun.target.position.set(this.pos.x, 0, this.pos.z);
-    this.sun.target.updateMatrixWorld();
+  // tumble: the cube physically rolls over — control lost, speed bleeds off
+  _startTumble(axis, dir) {
+    this.tumbling = true; this.tumbleT = 0; this.tumbleAxis = axis; this.tumbleDir = dir;
+    if (this.pending > 0) { this.pending = 0; this.mult = 1; this.driftTime = 0; this.hud.setCombo(1, 0, false); } // combo lost!
+    this.audio.tumble(); this.audio.screech(0);
+    this._shake(1.3);
   }
 
-  _shake(a) { this.shakeAmt = Math.min(2.5, (this.shakeAmt || 0) + a); }
-
-  _die(kind) {
-    if (this.dead) return;
-    // SHIELD saves you from one fall: snap back onto the nearest safe tile
-    if (kind === 'fall' && this.shield) {
-      this.shield = false; this.hud.setPowers(this._powerState());
-      const i = clamp(Math.round(this.pos.x / T), -WIDTH, WIDTH);
-      const j = Math.max(START_PAD, Math.round(this.pos.z / T) - 1);
-      this.pos.set(i * T, 0, j * T); this.vy = 0; this.airborne = false;
-      this.audio.land(); this._shake(0.8);
-      return;
-    }
-    this.dead = true; this.deadT = 0; this.deathKind = kind;
-    this.airborne = true; this.vy = kind === 'burn' ? 4 : -2; // burn pops up, fall drops
-    if (this.pending > 0) this.score += Math.floor(this.pending * this.mult);
-    this.score += Math.floor(this.dist);   // bank distance survived
-    this.audio.hush();
-    this.audio[kind === 'burn' ? 'ignite' : 'death']();
-    this._shake(1.2);
-  }
-
-  _winRun() {
-    this.won = true; this.dead = true; this.deadT = 0; this.deathKind = 'win';
-    if (this.pending > 0) this.score += Math.floor(this.pending * this.mult);
-    this.score += Math.floor(this.dist) + 5000; // course-clear bonus
-    this.audio.hush(); this.audio.point(8); this._shake(0.6);
-    setTimeout(() => this._finish(), 700);
-  }
-
-  _collectPower(type) {
-    this.audio.point(6); this._shake(0.3);
-    if (type === PWR.SPEED) this.boostT = 5;
-    else if (type === PWR.DOUBLE) this.doubleT = 8;
-    else if (type === PWR.SHIELD) this.shield = true;
-    this.hud.setPowers(this._powerState());
-  }
-
-  _powerState() {
-    return { speed: this.boostT > 0 ? Math.ceil(this.boostT) : 0,
-             x2: this.doubleT > 0 ? Math.ceil(this.doubleT) : 0,
-             shield: this.shield };
-  }
-
-  _tickPowerups() {
-    // keep the HUD timers fresh while any are active
-    if (this.boostT > 0 || this.doubleT > 0 || this._lastShield !== this.shield) {
-      this.hud.setPowers(this._powerState());
-      this._lastShield = this.shield;
-    }
-  }
-
-  _updateDeath(dt) {
-    this.deadT += dt;
-    // keep drifting horizontally while it falls/burns, for drama
+  _updateTumble(dt) {
+    this.tumbleT += dt;
+    const k = this.tumbleT / TUMBLE_DUR;
+    // velocity bleeds off fast while rolling
+    this.vel.multiplyScalar(Math.pow(0.12, dt));
     this.pos.x += this.vel.x * dt; this.pos.z += this.vel.y * dt;
-    this.vy -= GRAVITY * dt; this.pos.y += this.vy * dt;
+    // little hop + two full body rolls
+    this.pos.y = Math.max(0, Math.sin(Math.min(k, 1) * Math.PI) * 1.4);
+    const roll = this.tumbleDir * (k * Math.PI * 2 * 2);
     this.cube.position.set(this.pos.x, this.pos.y, this.pos.z);
-    this.cube.rotation.x += dt * 4; this.cube.rotation.z += dt * 3;
-    if (this.deathKind === 'burn') { for (let i = 0; i < 2; i++) this._emitFlame(1); }
-    this._updateSmoke(dt); this._updateFlames(dt);
-    this.fireLight.position.set(this.pos.x, this.pos.y + 1, this.pos.z);
-    this._updateCamera(dt, 0);
-    if (this.deadT > 0.9) this._finish();
+    if (this.tumbleAxis === 'z') this.cube.rotation.z = roll; else this.cube.rotation.x = roll;
+    // dust burst while rolling
+    if (Math.random() < 0.5) this._emitSmoke(0.3, 1.0, 0x8a8a8a);
+    this._updateSmoke(dt); this._fadeSkids(dt); this._updateDebris(dt); this._updateMovables(dt);
+    this.blob.position.set(this.pos.x, 0.05, this.pos.z);
+    this._updateCamera(dt, 0.2, 0);
+    this.audio.engine(0.15, false);
+    if (this.tumbleT >= TUMBLE_DUR) {
+      this.tumbling = false;
+      this.cube.rotation.x = 0; this.cube.rotation.z = 0;
+      this.pos.y = 0; this.airborne = false; this.vy = 0;
+      this.tipTimer = 0;
+      this.audio.land();
+    }
+  }
+
+  _wallHit(velKey) {
+    const impact = Math.abs(this.vel[velKey]);
+    this.vel[velKey] *= -0.45;
+    if (impact > 8) { this.audio.thud(); this._shake(clamp(impact * 0.04, 0.2, 1)); }
+  }
+
+  _collideFixed() {
+    for (const b of this.fixed) {
+      const dx = this.pos.x - b.x, dz = this.pos.z - b.z;
+      const d = Math.hypot(dx, dz), min = b.r + 1.2;
+      if (d >= min || d < 1e-4) continue;
+      if (this.pos.y > b.h) continue;                  // sailed clean over it
+      const nx = dx / d, nz = dz / d;
+      this.pos.x = b.x + nx * min; this.pos.z = b.z + nz * min;
+      const vdot = this.vel.x * nx + this.vel.y * nz;
+      let impact = 0;
+      if (vdot < 0) { impact = -vdot; this.vel.x -= 1.6 * vdot * nx; this.vel.y -= 1.6 * vdot * nz; }
+      // airborne smack or a hard frontal hit flips you end over end
+      if (this.airborne || impact > 26) { this._burstDebris(b.x, b.z, 0x4a78c0, 4); return this._startTumble('x', -1); }
+      if (impact > 6) { this.audio.thud(); this._shake(clamp(impact * 0.045, 0.2, 1.1)); }
+    }
+  }
+
+  _collideMovables() {
+    const speed = this.vel.length();
+    for (const o of this.movables) {
+      const dx = o.mesh.position.x - this.pos.x, dz = o.mesh.position.z - this.pos.z;
+      const d = Math.hypot(dx, dz), min = o.r + 1.4;
+      if (d >= min || d < 1e-4) continue;
+      if (this.pos.y > o.h) continue;                  // jumped over it
+      const nx = dx / d, nz = dz / d;
+      // hitting a solid object while airborne sends you tumbling
+      if (this.airborne) {
+        o.vx = nx * 14; o.vz = nz * 14; o.vy = 7; o.spin = (Math.random() - 0.5) * 16;
+        this._knock(o);
+        return this._startTumble('x', -1);
+      }
+      // ground hit: the obstacle gets launched, you barely slow
+      const kick = clamp(speed, 8, 34);
+      o.vx = nx * kick * 0.95 + this.vel.x * 0.3;
+      o.vz = nz * kick * 0.95 + this.vel.y * 0.3;
+      o.vy = clamp(kick * 0.28, 2, 9);
+      o.spin = (Math.random() - 0.5) * 18;
+      this._knock(o);
+      this.vel.multiplyScalar(0.86);
+      this._shake(clamp(speed * 0.02, 0.15, 0.6));
+    }
+  }
+
+  // first knock of each movable awards points + a debris burst
+  _knock(o) {
+    if (!o.knocked) {
+      o.knocked = true;
+      this.score += 150;
+      const col = o.mesh.material.color ? o.mesh.material.color.getHex() : 0xffaa55;
+      this._burstDebris(o.mesh.position.x, o.mesh.position.z, col, 6);
+    }
+    this.audio.crash();
+  }
+
+  _updateMovables(dt) {
+    for (const o of this.movables) {
+      const m = o.mesh;
+      const moving = Math.abs(o.vx) + Math.abs(o.vz) + Math.abs(o.vy) > 0.05;
+      if (!moving) continue;
+      m.position.x += o.vx * dt; m.position.z += o.vz * dt;
+      o.vy -= GRAVITY * 0.6 * dt;
+      m.position.y += o.vy * dt;
+      const rest = o.h * 0.25;        // resting height once toppled
+      if (m.position.y < rest) { m.position.y = rest; o.vy *= -0.3; if (Math.abs(o.vy) < 1) o.vy = 0; }
+      o.vx *= Math.pow(0.18, dt); o.vz *= Math.pow(0.18, dt);
+      m.rotation.x += o.spin * dt * 0.6; m.rotation.z += o.spin * dt * 0.4;
+      o.spin *= Math.pow(0.25, dt);
+      m.position.x = clamp(m.position.x, -HALF + 1, HALF - 1);
+      m.position.z = clamp(m.position.z, -HALF + 1, HALF - 1);
+    }
   }
 
   _bank() {
-    const x2 = this.doubleT > 0 ? 2 : 1;
-    const gained = Math.floor(this.pending * this.mult) * x2;
+    const gained = Math.floor(this.pending * this.mult);
     this.score += gained;
-    this.audio.point(this.mult);
+    this.audio.bank(this.mult);
     this.hud.bankFlash(gained, this.mult);
     this._shake(0.15 + Math.min(this.mult, 9) * 0.05);
     this.pending = 0; this.driftTime = 0; this.mult = 1; this.notDrift = 0;
     this.hud.setCombo(1, 0, false);
   }
 
-  _finish() {
-    this.running = false;
-    this.audio.hush();
-    const isBest = this.score > this.best;
-    if (isBest) { this.best = this.score; this._saveBest(this.best); this.hud.setBest(this.best); }
-    this.hud.showResult(this.score, this.best, isBest, this.deathKind);
-  }
-
-  _fadeTrail(dt) {
-    for (const t of this.trail) {
-      if (t.life <= 0) continue;
-      t.life -= dt * 0.22;
-      t.mesh.material.opacity = Math.max(0, t.life) * 0.7;
-      if (t.life <= 0) t.mesh.visible = false;
-    }
-  }
-
-  _emitSmoke(amt) {
+  // ------------------------------------------------------------- effects --
+  _emitSmoke(opacity, size, color) {
     const p = this.smoke[this.smokeCursor]; this.smokeCursor = (this.smokeCursor + 1) % this.smoke.length;
-    p.mesh.position.set(this.pos.x, this.pos.y + 0.6, this.pos.z);
-    p.size = 1.1; p.life = 1;
-    p.vx = (Math.random() - 0.5) * 2 - this.vel.x * 0.15;
-    p.vz = (Math.random() - 0.5) * 2 - this.vel.y * 0.15;
-    p.vy = 2 + Math.random() * 2;
-    const g = 0.3 + Math.random() * 0.2; p.mesh.material.color.setRGB(g, g, g);
-    p.mesh.material.opacity = 0.5 * amt; p.mesh.visible = true;
+    p.mesh.position.set(this.pos.x + (Math.random() - 0.5) * 1.2, this.pos.y + 0.4, this.pos.z + (Math.random() - 0.5) * 1.2);
+    p.size = size; p.life = 1;
+    p.vx = (Math.random() - 0.5) * 2 - this.vel.x * 0.12;
+    p.vz = (Math.random() - 0.5) * 2 - this.vel.y * 0.12;
+    p.vy = 1.6 + Math.random() * 1.8;
+    p.mesh.material.color.setHex(color);
+    p.mesh.material.opacity = opacity; p.mesh.visible = true;
+    p.fade = opacity;
   }
   _updateSmoke(dt) {
     for (const p of this.smoke) {
       if (p.life <= 0) continue;
-      p.life -= dt * 0.8; p.size += dt * 3;
+      p.life -= dt * 0.9; p.size += dt * 3.4;
       p.mesh.position.x += p.vx * dt; p.mesh.position.y += p.vy * dt; p.mesh.position.z += p.vz * dt;
       p.mesh.scale.setScalar(p.size); p.mesh.quaternion.copy(this.camera.quaternion);
-      p.mesh.material.opacity = Math.max(0, p.life) * 0.4;
+      p.mesh.material.opacity = Math.max(0, p.life) * p.fade;
       if (p.life <= 0) p.mesh.visible = false;
     }
   }
 
-  _emitFlame(amt) {
-    const p = this.flames[this.fireCursor]; this.fireCursor = (this.fireCursor + 1) % this.flames.length;
-    p.mesh.position.set(this.pos.x + (Math.random() - 0.5) * 1.2, this.pos.y + 0.5, this.pos.z + (Math.random() - 0.5) * 1.2);
-    p.size = 1.0 + Math.random() * 0.6; p.life = 1;
-    p.vx = (Math.random() - 0.5) * 1.5; p.vz = (Math.random() - 0.5) * 1.5; p.vy = 4 + Math.random() * 3;
-    p.mesh.material.color.setHSL(0.07 + Math.random() * 0.05, 1, 0.55);
-    p.mesh.material.opacity = 0.9; p.mesh.visible = true;
+  _dropSkid() {
+    const s = this.skids[this.skidCursor]; this.skidCursor = (this.skidCursor + 1) % this.skids.length;
+    s.mesh.position.set(this.pos.x, 0.04, this.pos.z);
+    s.mesh.rotation.z = Math.atan2(this.vel.x, this.vel.y);
+    s.mesh.material.opacity = 0.55; s.mesh.visible = true; s.life = 1;
   }
-  _updateFlames(dt) {
-    for (const p of this.flames) {
+  _fadeSkids(dt) {
+    for (const s of this.skids) {
+      if (s.life <= 0) continue;
+      s.life -= dt * 0.2;
+      s.mesh.material.opacity = Math.max(0, s.life) * 0.55;
+      if (s.life <= 0) s.mesh.visible = false;
+    }
+  }
+
+  _burstDebris(x, z, color, n = 6) {
+    for (let i = 0; i < n; i++) {
+      const p = this.debris[this.debrisCursor]; this.debrisCursor = (this.debrisCursor + 1) % this.debris.length;
+      p.mesh.position.set(x, 1 + Math.random(), z);
+      p.vx = (Math.random() - 0.5) * 12; p.vz = (Math.random() - 0.5) * 12; p.vy = 5 + Math.random() * 6;
+      p.life = 1; p.mesh.material.color.setHex(color); p.mesh.material.opacity = 1;
+      p.mesh.rotation.set(Math.random() * 3, Math.random() * 3, 0);
+      p.mesh.visible = true;
+    }
+  }
+  _updateDebris(dt) {
+    for (const p of this.debris) {
       if (p.life <= 0) continue;
-      p.life -= dt * 2.4; p.size *= (1 - dt * 1.2);
+      p.life -= dt * 1.3;
+      p.vy -= GRAVITY * 0.8 * dt;
       p.mesh.position.x += p.vx * dt; p.mesh.position.y += p.vy * dt; p.mesh.position.z += p.vz * dt;
-      p.mesh.scale.setScalar(p.size); p.mesh.quaternion.copy(this.camera.quaternion);
+      if (p.mesh.position.y < 0.15) { p.mesh.position.y = 0.15; p.vy *= -0.4; }
+      p.mesh.rotation.x += dt * 6; p.mesh.rotation.z += dt * 5;
       p.mesh.material.opacity = Math.max(0, p.life);
       if (p.life <= 0) p.mesh.visible = false;
     }
   }
 
-  _loadBest() { try { return +localStorage.getItem('cube.best') || 0; } catch { return 0; } }
-  _saveBest(v) { try { localStorage.setItem('cube.best', String(v)); } catch {} }
+  _updateCamera(dt, speed01, driftAmt) {
+    this.shakeAmt = (this.shakeAmt || 0) * Math.pow(0.0001, dt);
+    let d = this.theta - this.camYaw;
+    while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+    this.camYaw += d * Math.min(1, dt * 3.5);
+    const bx = Math.sin(this.camYaw), bz = Math.cos(this.camYaw);
+    const sx = (Math.random() - 0.5) * this.shakeAmt, sz = (Math.random() - 0.5) * this.shakeAmt;
+    const back = CAM_BACK + speed01 * 4;
+    const want = new THREE.Vector3(this.pos.x - bx * back + sx, CAM_H + speed01 * 2.5 + this.pos.y * 0.5, this.pos.z - bz * back + sz);
+    this.camPos.lerp(want, 1 - Math.exp(-dt * 6));
+    this.camLook.lerp(new THREE.Vector3(this.pos.x + bx * 7, this.pos.y + 1.5, this.pos.z + bz * 7), 1 - Math.exp(-dt * 6));
+    this.camera.position.copy(this.camPos);
+    this.camera.lookAt(this.camLook);
+    const wantFov = 55 + speed01 * 13 + driftAmt * 6;
+    this.camera.fov += (wantFov - this.camera.fov) * Math.min(1, dt * 4);
+    this.camera.updateProjectionMatrix();
+
+    this.sun.position.set(this.pos.x + 10, 26, this.pos.z + 8);
+    this.sun.target.position.set(this.pos.x, 0, this.pos.z);
+    this.sun.target.updateMatrixWorld();
+  }
+
+  _shake(a) { this.shakeAmt = Math.min(2.5, (this.shakeAmt || 0) + a); }
+
+  _loadBest() { try { return +localStorage.getItem('driftcube.best') || 0; } catch { return 0; } }
+  _saveBest(v) { try { localStorage.setItem('driftcube.best', String(v)); } catch {} }
 
   _resize() {
     const w = innerWidth, h = innerHeight;
@@ -739,27 +616,39 @@ export class Game {
   }
 }
 
-// ---- procedural textures -------------------------------------------------
-function makeWoodTexture() {
+// ---- procedural textures ---------------------------------------------------
+function makeWoodTexture(light = '#b07d42', dark = '#7e5328') {
   const s = 128; const cv = document.createElement('canvas'); cv.width = cv.height = s;
   const g = cv.getContext('2d');
   const grd = g.createLinearGradient(0, 0, 0, s);
-  grd.addColorStop(0, '#9c6b35'); grd.addColorStop(0.5, '#b07d42'); grd.addColorStop(1, '#7e5328');
+  grd.addColorStop(0, dark); grd.addColorStop(0.5, light); grd.addColorStop(1, dark);
   g.fillStyle = grd; g.fillRect(0, 0, s, s);
-  // grain lines
-  g.strokeStyle = 'rgba(80,50,20,0.35)'; g.lineWidth = 1;
+  g.strokeStyle = 'rgba(70,45,18,0.35)'; g.lineWidth = 1;
   for (let y = 4; y < s; y += 7 + Math.random() * 4) {
     g.beginPath();
     for (let x = 0; x <= s; x += 8) g.lineTo(x, y + Math.sin(x * 0.15) * 2);
     g.stroke();
   }
-  // a couple of knots
   for (let i = 0; i < 2; i++) {
     const kx = 20 + Math.random() * 88, ky = 20 + Math.random() * 88;
-    g.strokeStyle = 'rgba(70,42,18,0.5)';
+    g.strokeStyle = 'rgba(60,38,15,0.5)';
     for (let r = 2; r < 9; r += 2) { g.beginPath(); g.ellipse(kx, ky, r, r * 1.4, 0, 0, 7); g.stroke(); }
   }
-  const t = new THREE.CanvasTexture(cv); return t;
+  return new THREE.CanvasTexture(cv);
+}
+
+function makeFloorTexture() {
+  const s = 256; const cv = document.createElement('canvas'); cv.width = cv.height = s;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#0b0e16'; g.fillRect(0, 0, s, s);
+  for (let i = 0; i < 1400; i++) {
+    g.fillStyle = `rgba(80,90,110,${0.04 + Math.random() * 0.10})`;
+    g.fillRect(Math.random() * s, Math.random() * s, 1.4, 1.4);
+  }
+  g.shadowColor = 'rgba(42,157,255,0.9)'; g.shadowBlur = 8;
+  g.strokeStyle = 'rgba(70,170,255,0.8)'; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(0, 1.5); g.lineTo(s, 1.5); g.moveTo(1.5, 0); g.lineTo(1.5, s); g.stroke();
+  return new THREE.CanvasTexture(cv);
 }
 
 function makePuff(strength = 0.9) {
@@ -770,39 +659,5 @@ function makePuff(strength = 0.9) {
   grd.addColorStop(0.5, `rgba(255,255,255,${strength * 0.4})`);
   grd.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = grd; g.fillRect(0, 0, s, s);
-  return new THREE.CanvasTexture(cv);
-}
-
-// a camera-facing text sprite (level markers, power-up icons)
-function makeLabel(text, x, y, z, color = 0xffffff, scale = 3) {
-  const s = 256; const cv = document.createElement('canvas'); cv.width = s; cv.height = 128;
-  const g = cv.getContext('2d');
-  g.font = 'bold 76px -apple-system, system-ui, sans-serif';
-  g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.shadowColor = '#' + new THREE.Color(color).getHexString(); g.shadowBlur = 22;
-  g.fillStyle = '#fff'; g.fillText(text, s / 2, 70);
-  g.fillStyle = '#' + new THREE.Color(color).getHexString(); g.shadowBlur = 0;
-  g.globalAlpha = 0.5; g.fillText(text, s / 2, 70); g.globalAlpha = 1;
-  const tex = new THREE.CanvasTexture(cv);
-  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
-  spr.position.set(x, y, z); spr.scale.set(scale * 2, scale, 1);
-  return spr;
-}
-
-// platform top: subtle panel with a soft inner glow border
-function makeTileTexture() {
-  const s = 128; const cv = document.createElement('canvas'); cv.width = cv.height = s;
-  const g = cv.getContext('2d');
-  g.fillStyle = '#ffffff'; g.fillRect(0, 0, s, s);
-  // inner panel
-  g.fillStyle = '#cdd8ef'; g.fillRect(8, 8, s - 16, s - 16);
-  // glowing inset border
-  g.strokeStyle = 'rgba(90,160,255,0.9)'; g.lineWidth = 3;
-  g.strokeRect(10, 10, s - 20, s - 20);
-  // fine speckle
-  for (let i = 0; i < 500; i++) {
-    g.fillStyle = `rgba(120,140,180,${0.05 + Math.random() * 0.12})`;
-    g.fillRect(10 + Math.random() * (s - 20), 10 + Math.random() * (s - 20), 1.4, 1.4);
-  }
   return new THREE.CanvasTexture(cv);
 }

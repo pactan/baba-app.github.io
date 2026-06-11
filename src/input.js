@@ -1,32 +1,34 @@
-// Unified input for the platform-drift game: steer left/right + jump.
-// On-screen buttons (touch) and keyboard (desktop testing).
+// Input for the drift-cube sandbox: gas, brake, steer left/right, jump.
+// On-screen buttons (touch) + keyboard (desktop).
 export class Input {
   constructor() {
+    this.gas = false;
+    this.brake = false;
     this.left = false;
     this.right = false;
     this.jump = false;       // edge-triggered: true for one frame on press
     this._jumpHeld = false;
 
-    const L = document.getElementById('btn-left');
-    const R = document.getElementById('btn-right');
-    const J = document.getElementById('btn-jump');
-
-    this._hold(L, (on) => { this.left = on; L.classList.toggle('active', on); });
-    this._hold(R, (on) => { this.right = on; R.classList.toggle('active', on); });
-    this._hold(J, (on) => { this._setJump(on); J.classList.toggle('active', on); });
+    this._hold('btn-left', (on) => { this.left = on; });
+    this._hold('btn-right', (on) => { this.right = on; });
+    this._hold('btn-gas', (on) => { this.gas = on; });
+    this._hold('btn-brake', (on) => { this.brake = on; });
+    this._hold('btn-jump', (on) => this._setJump(on));
 
     addEventListener('keydown', (e) => this._key(e, true));
     addEventListener('keyup', (e) => this._key(e, false));
   }
 
-  _hold(el, set) {
+  _hold(id, set) {
+    const el = document.getElementById(id);
     if (!el) return;
-    const down = (e) => { e.preventDefault(); set(true); el.setPointerCapture?.(e.pointerId); };
-    const up = (e) => { e.preventDefault(); set(false); };
+    const wrap = (on) => { set(on); el.classList.toggle('active', on); };
+    const down = (e) => { e.preventDefault(); wrap(true); el.setPointerCapture?.(e.pointerId); };
+    const up = (e) => { e.preventDefault(); wrap(false); };
     el.addEventListener('pointerdown', down);
     el.addEventListener('pointerup', up);
     el.addEventListener('pointercancel', up);
-    el.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') set(false); });
+    el.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') wrap(false); });
   }
 
   _setJump(on) {
@@ -36,15 +38,16 @@ export class Input {
 
   _key(e, on) {
     switch (e.key) {
+      case 'ArrowUp': case 'w': case 'W': this.gas = on; break;
+      case 'ArrowDown': case 's': case 'S': this.brake = on; break;
       case 'ArrowLeft': case 'a': case 'A': this.left = on; break;
       case 'ArrowRight': case 'd': case 'D': this.right = on; break;
-      case ' ': case 'ArrowUp': case 'w': case 'W': this._setJump(on); break;
+      case ' ': this._setJump(on); break;
       default: return;
     }
     e.preventDefault();
   }
 
-  // call once per frame after reading, to clear the one-shot jump
   endFrame() { this.jump = false; }
 
   get steer() { return (this.right ? 1 : 0) - (this.left ? 1 : 0); }
