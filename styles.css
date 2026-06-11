@@ -23,19 +23,7 @@ html, body {
   text-shadow: 0 1px 3px rgba(0,0,0,0.45), 0 2px 14px rgba(0,0,0,0.3); }
 #top { display: flex; justify-content: space-between; align-items: flex-start; }
 .score-wrap { text-align: left; }
-.level-wrap { text-align: center; }
 .best-wrap { text-align: right; }
-#level { font-size: 30px; font-weight: 800; letter-spacing: -0.5px; line-height: 0.95;
-  font-variant-numeric: tabular-nums; color: #7fe0ff; }
-.level-wrap .sub { text-align: center; }
-#coins { margin-top: 10px; font-size: 20px; font-weight: 800; letter-spacing: 0.5px; }
-
-/* active power-up chips */
-#powers { display: flex; gap: 8px; justify-content: center; margin-top: 10px; min-height: 26px; }
-.pw { padding: 4px 11px; border-radius: 20px; font-size: 13px; font-weight: 800; letter-spacing: 0.5px;
-  color: #00121a; box-shadow: 0 3px 14px rgba(0,0,0,0.4); animation: pwin 0.3s var(--ease); }
-.pw.spd { background: #36e0ff; } .pw.dbl { background: #ffd23a; } .pw.shd { background: #57ff8a; }
-@keyframes pwin { from { transform: scale(0.5); opacity: 0; } }
 #score { font-size: 44px; font-weight: 800; letter-spacing: -1.5px; line-height: 0.95;
   font-variant-numeric: tabular-nums; }
 #best { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; color: var(--muted);
@@ -43,39 +31,8 @@ html, body {
 .sub { font-size: 11px; font-weight: 700; letter-spacing: 2px; color: var(--muted); margin-top: 3px; }
 .best-wrap .sub { text-align: right; }
 
-/* friction heat meter */
-#heatbar { position: relative; margin: 16px auto 0; width: 64%; max-width: 320px; height: 12px;
-  border-radius: 8px; background: rgba(255,255,255,0.12); overflow: hidden;
-  border: 1px solid rgba(255,255,255,0.18); }
-#heatfill { height: 100%; width: 0%; border-radius: 8px;
-  background: linear-gradient(90deg, #34d058, #ffd23a 55%, #ff6014);
-  transition: width 0.12s linear; }
-#heatbar.hot { animation: heatpulse 0.4s steps(1) infinite; box-shadow: 0 0 18px rgba(255,80,0,0.8); }
-@keyframes heatpulse { 50% { box-shadow: 0 0 6px rgba(255,80,0,0.4); } }
-#heatlabel { position: absolute; inset: 0; display: grid; place-items: center;
-  font-size: 9px; font-weight: 800; letter-spacing: 2px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
-
-/* ---------- results overlay ---------- */
-#result { position: fixed; inset: 0; z-index: 15; display: flex; align-items: center; justify-content: center;
-  background: rgba(0,0,0,0.72); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-  opacity: 1; transition: opacity 0.4s var(--ease); }
-#result.hidden { opacity: 0; pointer-events: none; display: flex !important; }
-.card { text-align: center; padding: 0 30px; transform: translateY(0); transition: transform 0.4s var(--ease); }
-#result.hidden .card { transform: translateY(20px); }
-#result-badge { font-size: 15px; font-weight: 800; letter-spacing: 4px; color: var(--muted); }
-#result-badge.record { color: var(--hot); text-shadow: 0 2px 24px rgba(255,159,10,0.6);
-  animation: pop 0.5s var(--ease); }
-#result-score { font-size: 88px; font-weight: 900; letter-spacing: -3px; line-height: 1; margin-top: 8px;
-  font-variant-numeric: tabular-nums; }
-#result-best { font-size: 16px; font-weight: 700; color: var(--muted); margin-top: 6px; }
-.again { margin-top: 34px; pointer-events: auto; border: none; cursor: pointer;
-  padding: 16px 38px; border-radius: 30px; font-size: 17px; font-weight: 800; letter-spacing: 1px;
-  color: #001; background: var(--accent); box-shadow: 0 8px 30px rgba(10,132,255,0.45);
-  transition: transform 0.1s var(--ease); }
-.again:active { transform: scale(0.94); }
-
 #combo {
-  position: fixed; left: 0; right: 0; top: 27%; text-align: center;
+  position: fixed; left: 0; right: 0; top: 24%; text-align: center;
   pointer-events: none; opacity: 0; transform: scale(0.7);
   transition: opacity 0.25s var(--ease), transform 0.25s var(--ease);
 }
@@ -87,32 +44,40 @@ html, body {
 #combo.bank #combo-mult { animation: pop 0.4s var(--ease); }
 @keyframes pop { 0% { transform: scale(1); } 40% { transform: scale(1.25); } 100% { transform: scale(1); } }
 
-/* ---------- controls (explicitly anchored to the bottom) ---------- */
+/* ---------- controls ---------- */
 #controls { position: fixed; inset: 0; z-index: 3; pointer-events: none; }
-.steer { position: fixed; left: 22px; bottom: max(30px, calc(env(safe-area-inset-bottom) + 18px));
-  display: flex; gap: 14px; pointer-events: auto; }
-.jump { position: fixed; right: 22px; bottom: max(30px, calc(env(safe-area-inset-bottom) + 18px)); }
+.steer { position: fixed; left: 20px; bottom: max(28px, calc(env(safe-area-inset-bottom) + 16px));
+  display: flex; gap: 13px; pointer-events: auto; }
+.drive { position: fixed; right: 20px; bottom: max(28px, calc(env(safe-area-inset-bottom) + 16px));
+  display: flex; flex-direction: column; align-items: flex-end; gap: 12px; pointer-events: auto; }
+.pedals { display: flex; gap: 12px; align-items: flex-end; }
+
+.pad, .gas, .brake, .jump {
+  pointer-events: auto; border: none; color: #fff;
+  background: rgba(20,28,42,0.45);
+  backdrop-filter: blur(16px) saturate(160%); -webkit-backdrop-filter: blur(16px) saturate(160%);
+  border: 1px solid rgba(255,255,255,0.35);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+  display: grid; place-items: center; font-weight: 800;
+  transition: transform 0.07s var(--ease), background 0.07s;
+}
+.pad { width: 86px; height: 86px; border-radius: 24px; font-size: 28px; }
+.gas { width: 104px; height: 104px; border-radius: 50%; font-size: 17px; letter-spacing: 1px;
+  background: rgba(52,208,88,0.5); border-color: rgba(150,255,180,0.6); }
+.brake { width: 84px; height: 84px; border-radius: 50%; font-size: 13px; letter-spacing: 0.5px;
+  background: rgba(255,69,58,0.45); border-color: rgba(255,160,150,0.55); }
+.jump { width: 76px; height: 76px; border-radius: 50%; font-size: 14px; letter-spacing: 0.5px;
+  background: rgba(46,208,255,0.45); border-color: rgba(160,230,255,0.6); }
+.pad.active { transform: scale(0.88); background: rgba(46,208,255,0.55); }
+.gas.active { transform: scale(0.92); background: rgba(52,208,88,0.8); }
+.brake.active { transform: scale(0.9); background: rgba(255,69,58,0.75); }
+.jump.active { transform: scale(0.9); background: rgba(46,208,255,0.8); }
 
 /* hide gameplay UI until the game is running */
 body:not(.playing) #hud, body:not(.playing) #controls { opacity: 0; pointer-events: none; }
 #hud, #controls { transition: opacity 0.5s var(--ease); }
 #err { margin-top: 18px; color: #ff6a6a; font: 12px ui-monospace, monospace; white-space: pre-wrap;
   max-width: 90vw; text-align: left; }
-
-.pad, .jump {
-  pointer-events: auto; border: none; color: #fff;
-  background: rgba(20,28,42,0.42);
-  backdrop-filter: blur(16px) saturate(160%); -webkit-backdrop-filter: blur(16px) saturate(160%);
-  border: 1px solid rgba(255,255,255,0.35);
-  box-shadow: 0 6px 20px rgba(0,0,0,0.28);
-  display: grid; place-items: center; font-weight: 800;
-  transition: transform 0.07s var(--ease), background 0.07s;
-}
-.pad { width: 92px; height: 92px; border-radius: 26px; font-size: 30px; }
-.jump { width: 128px; height: 128px; border-radius: 50%; font-size: 20px; letter-spacing: 1px;
-  background: rgba(46,208,255,0.5); border-color: rgba(160,230,255,0.7); }
-.pad.active { transform: scale(0.88); background: rgba(46,208,255,0.55); }
-.jump.active { transform: scale(0.9); background: rgba(46,208,255,0.8); border-color: rgba(200,245,255,0.9); }
 
 /* ---------- start overlay ---------- */
 #start { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
@@ -122,11 +87,10 @@ body:not(.playing) #hud, body:not(.playing) #controls { opacity: 0; pointer-even
 .launch .mark { font-size: 62px; animation: bob 2s var(--ease) infinite; }
 .launch .name { font-size: 40px; font-weight: 900; letter-spacing: 5px; margin-top: 10px; }
 @keyframes bob { 0%,100% { transform: translateY(0) rotate(-6deg); } 50% { transform: translateY(-10px) rotate(6deg); } }
-.launch .sub { color: var(--muted); font-size: 15px; margin-top: 14px; line-height: 1.5; }
+.launch .sub { color: var(--muted); font-size: 15px; margin-top: 14px; line-height: 1.55; }
 .launch .sub b { color: var(--fg); }
 .launch .tap { margin-top: 30px; font-size: 16px; font-weight: 600; color: var(--accent);
   animation: pulse 1.8s var(--ease) infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
 .hidden { display: none !important; }
 

@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#070912" />
-  <title>WOOD CUBE</title>
-  <link rel="stylesheet" href="styles.css?v=12" />
+  <title>DRIFT CUBE</title>
+  <link rel="stylesheet" href="styles.css?v=13" />
   <script type="importmap">
   {
     "imports": {
@@ -26,23 +26,11 @@
         <div id="score">0</div>
         <div class="sub">SCORE</div>
       </div>
-      <div class="level-wrap">
-        <div id="level">1 / 5</div>
-        <div class="sub">LEVEL</div>
-      </div>
       <div class="best-wrap">
         <div id="best">0</div>
         <div class="sub">BEST</div>
       </div>
     </div>
-
-    <div id="coins">🪙 0</div>
-
-    <!-- friction heat meter: smoke -> fire -> burn out -->
-    <div id="heatbar"><div id="heatfill"></div><span id="heatlabel">HEAT</span></div>
-
-    <!-- active power-up chips -->
-    <div id="powers"></div>
 
     <div id="combo">
       <span id="combo-mult">x1</span>
@@ -50,38 +38,33 @@
     </div>
   </div>
 
-  <!-- Results overlay -->
-  <div id="result" class="hidden">
-    <div class="card">
-      <div id="result-badge">WIPEOUT</div>
-      <div id="result-score">0</div>
-      <div class="sub">SCORE</div>
-      <div id="result-best">Best 0</div>
-      <button id="btn-again" class="again">GO AGAIN</button>
-    </div>
-  </div>
-
-  <!-- Touch controls: steer left/right + jump -->
+  <!-- Touch controls: steer (left) · jump/brake/gas (right) -->
   <div id="controls">
     <div class="steer">
       <button id="btn-left" class="pad" aria-label="Left">◀</button>
       <button id="btn-right" class="pad" aria-label="Right">▶</button>
     </div>
-    <button id="btn-jump" class="jump" aria-label="Jump">JUMP</button>
+    <div class="drive">
+      <button id="btn-jump" class="jump" aria-label="Jump">JUMP</button>
+      <div class="pedals">
+        <button id="btn-brake" class="brake" aria-label="Brake">BRAKE</button>
+        <button id="btn-gas" class="gas" aria-label="Gas">GAS</button>
+      </div>
+    </div>
   </div>
 
   <!-- Start overlay -->
   <div id="start">
     <div class="launch">
       <div class="mark">🪵</div>
-      <div class="name">WOOD CUBE</div>
-      <div class="sub"><b>5 levels</b> to the finish line.<br/><b>◀ ▶</b> steer &amp; drift · <b>JUMP</b> over gaps.<br/>Grab 🪙 coins &amp; power-ups: <b>»</b> speed · <b>x2</b> points · <b>◇</b> shield.<br/>Don't fall in a gap — and don't <b>burn</b> from over-drifting!</div>
+      <div class="name">DRIFT CUBE</div>
+      <div class="sub"><b>GAS</b> to roll, steer at speed to <b>drift</b> — chain slides for combos.<br/><b>JUMP</b> over stuff, smash crates &amp; barrels for points.<br/>Corner too hard while gripping and you'll <b>flip over</b>!</div>
       <div class="tap">Tap to start</div>
       <div id="err"></div>
     </div>
-    <div id="ver">build v12</div>
+    <div id="ver">build v13</div>
   </div>
 
-  <script type="module" src="src/main.js?v=12"></script>
+  <script type="module" src="src/main.js?v=13"></script>
 </body>
 </html>
