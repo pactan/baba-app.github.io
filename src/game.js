@@ -70,7 +70,6 @@ export class Game {
     this._lights();
     this._world();
     this._cube();
-    this._skids();
     this._smoke();
     this._debris();
     this._post();
@@ -201,17 +200,6 @@ export class Game {
     this.blob = new THREE.Mesh(new THREE.PlaneGeometry(CUBE * 1.7, CUBE * 1.7),
       new THREE.MeshBasicMaterial({ map: makePuff(0.7), color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false }));
     this.blob.rotation.x = -Math.PI / 2; this.scene.add(this.blob);
-  }
-
-  _skids() {
-    const geo = new THREE.PlaneGeometry(0.5, 1.6);
-    this.skids = [];
-    for (let i = 0; i < 200; i++) {
-      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x0a0705, transparent: true, opacity: 0, depthWrite: false }));
-      m.rotation.x = -Math.PI / 2; m.visible = false; this.scene.add(m);
-      this.skids.push({ mesh: m, life: 0 });
-    }
-    this.skidCursor = 0; this.skidTimer = 0;
   }
 
   _smoke() {
@@ -373,18 +361,18 @@ export class Game {
         this._emitSmoke(o, 1.1 + speed01 * 0.7, 0xbbbbbb);
         this._emitSmoke(o * 0.8, 0.9 + speed01 * 0.5, 0xa9a9a9);
       }
-      this.skidTimer += dt;
-      if (this.skidTimer > 0.022) { this.skidTimer = 0; this._dropSkid(); }
     }
-    this._updateSmoke(dt); this._fadeSkids(dt); this._updateDebris(dt); this._updateMovables(dt);
+    this._updateSmoke(dt); this._updateDebris(dt); this._updateMovables(dt);
 
-    // --- place cube: lean into the slide, wobble near tip threshold ---
+    // --- place cube: the WHOLE cube drifts FLAT — only yaw + a tiny tip-warning.
+    // No motorcycle lean: it slides as a rigid block, rotating about Y only.
     this.cube.position.set(this.pos.x, this.pos.y, this.pos.z);
     this.cube.rotation.y = this.theta;
     const tipWarn = clamp(this.tipTimer / TIP_TIME, 0, 1);
-    const leanZ = clamp(-vLat * 0.045, -0.35, 0.35) - steer * tipWarn * 0.25;
-    this.cube.rotation.z = lerp(this.cube.rotation.z, leanZ, Math.min(1, dt * 10));
-    this.cube.rotation.x = lerp(this.cube.rotation.x, this.airborne ? -0.15 : (gas ? -0.03 : brake ? 0.05 : 0), Math.min(1, dt * 8));
+    // dead flat in normal drift; only a faint warning lean once you're truly
+    // near the rollover limit (tipWarn ramps in the last moments before a flip)
+    this.cube.rotation.z = lerp(this.cube.rotation.z, -steer * tipWarn * tipWarn * 0.18, Math.min(1, dt * 10));
+    this.cube.rotation.x = lerp(this.cube.rotation.x, 0, Math.min(1, dt * 8));
     this.blob.position.set(this.pos.x, 0.05, this.pos.z);
     const air = clamp(1 - this.pos.y / 6, 0.25, 1);
     this.blob.scale.setScalar(air); this.blob.material.opacity = 0.45 * air;
@@ -419,7 +407,7 @@ export class Game {
     if (this.tumbleAxis === 'z') this.cube.rotation.z = roll; else this.cube.rotation.x = roll;
     // dust burst while rolling
     if (Math.random() < 0.5) this._emitSmoke(0.3, 1.0, 0x8a8a8a);
-    this._updateSmoke(dt); this._fadeSkids(dt); this._updateDebris(dt); this._updateMovables(dt);
+    this._updateSmoke(dt); this._updateDebris(dt); this._updateMovables(dt);
     this.blob.position.set(this.pos.x, 0.05, this.pos.z);
     this._updateCamera(dt, 0.2, 0);
     this.audio.engine(0.15, false);
@@ -543,20 +531,6 @@ export class Game {
     }
   }
 
-  _dropSkid() {
-    const s = this.skids[this.skidCursor]; this.skidCursor = (this.skidCursor + 1) % this.skids.length;
-    s.mesh.position.set(this.pos.x, 0.04, this.pos.z);
-    s.mesh.rotation.z = Math.atan2(this.vel.x, this.vel.y);
-    s.mesh.material.opacity = 0.55; s.mesh.visible = true; s.life = 1;
-  }
-  _fadeSkids(dt) {
-    for (const s of this.skids) {
-      if (s.life <= 0) continue;
-      s.life -= dt * 0.2;
-      s.mesh.material.opacity = Math.max(0, s.life) * 0.55;
-      if (s.life <= 0) s.mesh.visible = false;
-    }
-  }
 
   _burstDebris(x, z, color, n = 6) {
     for (let i = 0; i < n; i++) {
