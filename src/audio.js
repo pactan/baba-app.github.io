@@ -1,5 +1,5 @@
-// Web Audio for FLUX: a colour-cycle blip, a satisfying gate-pass chime that
-// rises with the combo, a near-miss whoosh, and a crash. Started on a gesture.
+// Web Audio for NERVE. The pitch RISES with every hop in a streak (tension
+// you can hear), a fat satisfying chime when you BANK, and a buzzer on bust.
 export class Audio {
   constructor() { this.ctx = null; }
 
@@ -9,7 +9,7 @@ export class Audio {
     if (!C) return;
     this.ctx = new C();
     this.master = this.ctx.createGain(); this.master.gain.value = 0.5; this.master.connect(this.ctx.destination);
-    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.5, this.ctx.sampleRate);
+    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.6, this.ctx.sampleRate);
     const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     this._noise = buf;
   }
@@ -36,15 +36,20 @@ export class Audio {
     n.connect(f); f.connect(g); g.connect(this.master); n.start(t); n.stop(t + dur + 0.02);
   }
 
-  cycle() { this._tone(420, 0.07, 'square', 0.12, 520); }
-  pass(combo) {
-    const f = 440 + Math.min(combo, 20) * 45;
-    this._tone(f, 0.13, 'triangle', 0.22, f * 1.5);
+  // each hop in a streak is a step up a scale — the audible "tightening rope"
+  hop(streak) {
+    const semis = [0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21, 23, 24];
+    const s = semis[Math.min(streak, semis.length - 1)];
+    const f = 300 * Math.pow(2, s / 12);
+    this._tone(f, 0.12, 'triangle', 0.22, f * 1.02);
   }
-  perfect(combo) {           // a clean centre pass
-    const f = 600 + Math.min(combo, 20) * 55;
-    this._tone(f, 0.16, 'square', 0.18, f * 1.6);
-    this._tone(f * 2, 0.12, 'sine', 0.1, f * 2.4);
+  // banking: a warm two-note resolve, brighter the bigger the haul
+  bank(streak) {
+    const base = 360 + Math.min(streak, 18) * 22;
+    this._tone(base, 0.18, 'sine', 0.26, base);
+    this._tone(base * 1.5, 0.3, 'triangle', 0.2, base * 1.5);
+    this._tone(base * 2, 0.34, 'sine', 0.14, base * 2);
   }
-  crash() { this._noiseBurst(700, 0.4, 0.45); this._tone(200, 0.5, 'sawtooth', 0.32, 55); }
+  bust() { this._noiseBurst(900, 0.45, 0.5); this._tone(220, 0.5, 'sawtooth', 0.3, 60); }
+  near() { this._tone(1200, 0.06, 'square', 0.10, 1500); } // tiny tick on a risky hop
 }
