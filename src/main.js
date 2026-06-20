@@ -1,30 +1,29 @@
-import { Game } from './game.js?v=14';
-import { Input } from './input.js?v=14';
-import { Audio } from './audio.js?v=14';
+import { Game } from './game.js?v=15';
+import { Input } from './input.js?v=15';
+import { Audio } from './audio.js?v=15';
 
 const $ = (id) => document.getElementById(id);
 
-let lastScore = -1, lastBest = -1, lastCombo = '';
+let lastScore = -1, lastBest = -1;
 const hud = {
-  setScore(v) { if (v !== lastScore) { lastScore = v; $('score').textContent = v.toLocaleString(); } },
-  setBest(v) { if (v !== lastBest) { lastBest = v; $('best').textContent = v.toLocaleString(); } },
-  setCombo(mult, pending, on) {
-    const el = $('combo');
-    el.classList.toggle('on', on);
-    const key = on ? mult + '|' + pending : 'off';
-    if (key !== lastCombo) {
-      lastCombo = key;
-      if (on) { $('combo-mult').textContent = 'x' + mult; $('combo-pending').textContent = '+' + pending; }
+  setScore(v) {
+    if (v !== lastScore) {
+      lastScore = v; const el = $('score'); el.textContent = v;
+      el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
     }
   },
-  bankFlash() {
-    const el = $('combo');
-    el.classList.add('bank');
-    setTimeout(() => el.classList.remove('bank'), 420);
+  setBest(v) { if (v !== lastBest) { lastBest = v; $('best').textContent = v; } },
+  showResult(score, best, isRecord) {
+    $('result-score').textContent = score;
+    $('result-best').textContent = 'Best ' + best;
+    const badge = $('result-badge');
+    badge.textContent = isRecord && score > 0 ? 'NEW BEST!' : 'GAME OVER';
+    badge.classList.toggle('record', isRecord && score > 0);
+    $('result').classList.remove('hidden');
   },
+  hideResult() { $('result').classList.add('hidden'); },
 };
 
-// Failures are shown on the start overlay so they're visible in screenshots.
 function showError(e) {
   const s = $('start'); s.classList.remove('hidden');
   $('err').textContent = 'Error: ' + (e && (e.message || e)) + (e && e.stack ? '\n' + e.stack.split('\n').slice(0, 3).join('\n') : '');
@@ -33,10 +32,7 @@ addEventListener('error', (ev) => showError(ev.error || ev.message));
 addEventListener('unhandledrejection', (ev) => showError(ev.reason));
 
 let audio, input, game, started = false;
-try {
-  audio = new Audio();
-  input = new Input();
-} catch (e) { showError(e); }
+try { audio = new Audio(); input = new Input(); } catch (e) { showError(e); }
 
 function begin() {
   if (started) return;
@@ -44,7 +40,7 @@ function begin() {
   try { audio.start(); } catch (e) {}
   try {
     game = new Game($('scene'), audio, input, hud);
-    window.__game = game;   // debug/test handle
+    window.__game = game;
     game.onError = showError;
     document.body.classList.add('playing');
     $('start').classList.add('hidden');
@@ -54,5 +50,7 @@ function begin() {
 
 const startEl = $('start');
 startEl.addEventListener('pointerdown', begin);
-startEl.addEventListener('click', begin);
-addEventListener('keydown', (e) => { if ((e.key === 'Enter') && !started) begin(); });
+addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !started) begin(); });
+
+// retry restarts the run (and swallows the tap so it isn't read as a drop)
+$('btn-again').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); if (game) game.restart(); });
