@@ -1,6 +1,6 @@
-import { Game } from './game.js?v=18';
-import { Input } from './input.js?v=18';
-import { Audio } from './audio.js?v=18';
+import { Game } from './game.js?v=19';
+import { Input } from './input.js?v=19';
+import { Audio } from './audio.js?v=19';
 
 const $ = (id) => document.getElementById(id);
 
@@ -17,7 +17,7 @@ const hud = {
     $('result-score').textContent = score;
     $('result-best').textContent = 'Best ' + best;
     const badge = $('result-badge');
-    badge.textContent = isRecord && score > 0 ? 'NEW BEST!' : 'CRASH';
+    badge.textContent = isRecord && score > 0 ? 'NEW BEST!' : 'GAME OVER';
     badge.classList.toggle('record', isRecord && score > 0);
     $('result').classList.remove('hidden');
   },
@@ -44,13 +44,12 @@ function begin() {
     game.onError = showError;
     document.body.classList.add('playing');
     $('start').classList.add('hidden');
-    setTimeout(() => $('hint').classList.add('fade'), 3500);
     game.start();
   } catch (e) { started = false; showError(e); }
 }
 
 const startEl = $('start');
 startEl.addEventListener('pointerdown', begin);
-addEventListener('keydown', (e) => { if ((e.key === 'Enter') && !started) begin(); });
+addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !started) begin(); });
 
 $('btn-again').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); if (game) game.restart(); });

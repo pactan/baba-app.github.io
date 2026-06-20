@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <meta name="theme-color" content="#10182e" />
-  <title>SWING</title>
-  <link rel="stylesheet" href="styles.css?v=18" />
+  <meta name="theme-color" content="#121a38" />
+  <title>SWING · STACK</title>
+  <link rel="stylesheet" href="styles.css?v=19" />
   <script type="importmap">
   {
     "imports": {
@@ -24,13 +24,11 @@
     <div id="best-row"><span id="best">0</span> <span class="lbl">BEST</span></div>
   </div>
 
-  <div id="hint">HOLD to swing · RELEASE to fly</div>
-
   <div id="result" class="hidden">
     <div class="card">
-      <div id="result-badge">CRASH</div>
+      <div id="result-badge">GAME OVER</div>
       <div id="result-score">0</div>
-      <div class="rsub">DISTANCE</div>
+      <div class="rsub">BLOCKS</div>
       <div id="result-best">Best 0</div>
       <button id="btn-again" class="again">TAP TO RETRY</button>
     </div>
@@ -38,15 +36,15 @@
 
   <div id="start">
     <div class="launch">
-      <div id="swing-icon">◜◞</div>
-      <div class="name">SWING</div>
-      <div class="sub"><b>Hold</b> to throw a rope and swing.<br/><b>Let go</b> at the right moment to launch far.<br/>Don't touch the ground. Distance is your score.</div>
+      <div id="ss-icon">◻<span id="ss-rope"></span></div>
+      <div class="name">SWING<span class="dot">·</span>STACK</div>
+      <div class="sub">The block <b>swings on a rope</b>.<br/><b>Tap</b> to drop it onto the tower.<br/>Land it dead-center for a <b>PERFECT</b> — the overhang gets sliced off.</div>
       <div class="tap">Tap to start</div>
       <div id="err"></div>
     </div>
-    <div id="ver">build v18</div>
+    <div id="ver">build v19</div>
   </div>
 
-  <script type="module" src="src/main.js?v=18"></script>
+  <script type="module" src="src/main.js?v=19"></script>
 </body>
 </html>
