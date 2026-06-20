@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <meta name="theme-color" content="#070912" />
-  <title>DRIFT CUBE</title>
-  <link rel="stylesheet" href="styles.css?v=14" />
+  <meta name="theme-color" content="#0a0e1c" />
+  <title>STACK</title>
+  <link rel="stylesheet" href="styles.css?v=15" />
   <script type="importmap">
   {
     "imports": {
@@ -21,50 +21,33 @@
 
   <!-- HUD -->
   <div id="hud">
-    <div id="top">
-      <div class="score-wrap">
-        <div id="score">0</div>
-        <div class="sub">SCORE</div>
-      </div>
-      <div class="best-wrap">
-        <div id="best">0</div>
-        <div class="sub">BEST</div>
-      </div>
-    </div>
-
-    <div id="combo">
-      <span id="combo-mult">x1</span>
-      <span id="combo-pending">+0</span>
-    </div>
+    <div id="score">0</div>
+    <div id="best-row"><span id="best">0</span> <span class="lbl">BEST</span></div>
   </div>
 
-  <!-- Touch controls: steer (left) · jump/brake/gas (right) -->
-  <div id="controls">
-    <div class="steer">
-      <button id="btn-left" class="pad" aria-label="Left">◀</button>
-      <button id="btn-right" class="pad" aria-label="Right">▶</button>
-    </div>
-    <div class="drive">
-      <button id="btn-jump" class="jump" aria-label="Jump">JUMP</button>
-      <div class="pedals">
-        <button id="btn-brake" class="brake" aria-label="Brake">BRAKE</button>
-        <button id="btn-gas" class="gas" aria-label="Gas">GAS</button>
-      </div>
+  <!-- Results overlay -->
+  <div id="result" class="hidden">
+    <div class="card">
+      <div id="result-badge">GAME OVER</div>
+      <div id="result-score">0</div>
+      <div class="rsub">BLOCKS</div>
+      <div id="result-best">Best 0</div>
+      <button id="btn-again" class="again">TAP TO RETRY</button>
     </div>
   </div>
 
   <!-- Start overlay -->
   <div id="start">
     <div class="launch">
-      <div class="mark">🪵</div>
-      <div class="name">DRIFT CUBE</div>
-      <div class="sub"><b>GAS</b> to roll, steer at speed to <b>drift</b> — chain slides for combos.<br/><b>JUMP</b> over stuff, smash crates &amp; barrels for points.<br/>Corner too hard while gripping and you'll <b>flip over</b>!</div>
+      <div id="stack-icon"><span></span><span></span><span></span></div>
+      <div class="name">STACK</div>
+      <div class="sub"><b>Tap anywhere</b> to drop each block.<br/>Line it up — the overhang gets sliced off.<br/>Nail it dead-center for a <b>PERFECT</b> and grow back!</div>
       <div class="tap">Tap to start</div>
       <div id="err"></div>
     </div>
-    <div id="ver">build v14</div>
+    <div id="ver">build v15</div>
   </div>
 
-  <script type="module" src="src/main.js?v=14"></script>
+  <script type="module" src="src/main.js?v=15"></script>
 </body>
 </html>
