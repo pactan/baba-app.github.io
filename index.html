@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <meta name="theme-color" content="#080a16" />
-  <title>NERVE</title>
-  <link rel="stylesheet" href="styles.css?v=17" />
+  <meta name="theme-color" content="#10182e" />
+  <title>SWING</title>
+  <link rel="stylesheet" href="styles.css?v=18" />
   <script type="importmap">
   {
     "imports": {
@@ -19,53 +19,34 @@
   <canvas id="scene"></canvas>
   <div id="vignette"></div>
 
-  <!-- HUD -->
   <div id="hud">
-    <div id="top">
-      <div class="col left"><div id="score">0</div><div class="sub">BANKED</div></div>
-      <div class="col right"><div id="best">0</div><div class="sub">BEST</div></div>
-    </div>
-
-    <!-- the press-your-luck core readout -->
-    <div id="potwrap">
-      <div id="pot">0</div>
-      <div id="streak"></div>
-      <div id="potlabel">POT &nbsp;·&nbsp; tap to risk it</div>
-    </div>
-
-    <!-- risk meter: the % the NEXT hop will bust -->
-    <div id="riskwrap">
-      <div id="riskbar"><div id="riskfill"></div></div>
-      <div id="risklabel"><span id="riskpct">6</span>% BUST NEXT HOP</div>
-    </div>
+    <div id="score">0</div>
+    <div id="best-row"><span id="best">0</span> <span class="lbl">BEST</span></div>
   </div>
 
-  <!-- BANK button -->
-  <button id="btn-bank">BANK<span id="bankamt"></span></button>
+  <div id="hint">HOLD to swing · RELEASE to fly</div>
 
-  <!-- Results -->
   <div id="result" class="hidden">
     <div class="card">
-      <div id="result-badge">BUSTED</div>
+      <div id="result-badge">CRASH</div>
       <div id="result-score">0</div>
-      <div class="rsub">BANKED TOTAL</div>
+      <div class="rsub">DISTANCE</div>
       <div id="result-best">Best 0</div>
       <button id="btn-again" class="again">TAP TO RETRY</button>
     </div>
   </div>
 
-  <!-- Start -->
   <div id="start">
     <div class="launch">
-      <div id="nerve-meter"><div id="nerve-fill"></div></div>
-      <div class="name">NERVE</div>
-      <div class="sub"><b>Tap</b> to hop forward — each hop grows your <b>pot</b> &amp; multiplier,<br/>but the <b>bust&nbsp;%</b> climbs (you can see it).<br/>Hit <b>BANK</b> to lock it in before your luck runs out.<br/>Tap on the bright pulse for a <b>perfect</b> — less added risk.</div>
+      <div id="swing-icon">◜◞</div>
+      <div class="name">SWING</div>
+      <div class="sub"><b>Hold</b> to throw a rope and swing.<br/><b>Let go</b> at the right moment to launch far.<br/>Don't touch the ground. Distance is your score.</div>
       <div class="tap">Tap to start</div>
       <div id="err"></div>
     </div>
-    <div id="ver">build v17</div>
+    <div id="ver">build v18</div>
   </div>
 
-  <script type="module" src="src/main.js?v=17"></script>
+  <script type="module" src="src/main.js?v=18"></script>
 </body>
 </html>

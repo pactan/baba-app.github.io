@@ -1,45 +1,23 @@
-import { Game } from './game.js?v=17';
-import { Input } from './input.js?v=17';
-import { Audio } from './audio.js?v=17';
+import { Game } from './game.js?v=18';
+import { Input } from './input.js?v=18';
+import { Audio } from './audio.js?v=18';
 
 const $ = (id) => document.getElementById(id);
 
-let lastScore = -1, lastBest = -1, lastPot = -1, lastStreak = '', lastRisk = -1;
+let lastScore = -1, lastBest = -1;
 const hud = {
-  setScore(v) { if (v !== lastScore) { lastScore = v; $('score').textContent = v.toLocaleString(); } },
-  setBest(v) { if (v !== lastBest) { lastBest = v; $('best').textContent = v.toLocaleString(); } },
-  setPot(v) {
-    if (v === lastPot) return; lastPot = v;
-    const el = $('pot'); el.textContent = v.toLocaleString();
-    el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
-    $('bankamt').textContent = v > 0 ? ' ' + v.toLocaleString() : '';
-    $('btn-bank').classList.toggle('ready', v > 0);
-  },
-  setStreak(streak, mult) {
-    const key = streak + '|' + mult;
-    if (key === lastStreak) return; lastStreak = key;
-    $('streak').textContent = streak > 0 ? (streak + ' HOPS · ' + mult + '×') : '';
-  },
-  setRisk(pct, perfect) {
-    pct = Math.round(pct);
-    if (pct !== lastRisk) {
-      lastRisk = pct;
-      $('riskpct').textContent = pct;
-      $('riskfill').style.width = pct + '%';
-      const bar = $('riskbar');
-      bar.classList.toggle('hi', pct >= 55);
-      bar.classList.toggle('mid', pct >= 30 && pct < 55);
+  setScore(v) {
+    if (v !== lastScore) {
+      lastScore = v; const el = $('score'); el.textContent = v;
+      el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
     }
-    if (perfect) { const w = $('riskwrap'); w.classList.remove('perfect'); void w.offsetWidth; w.classList.add('perfect'); }
   },
-  bankFlash(amt) {
-    const el = $('pot'); el.classList.remove('cash'); void el.offsetWidth; el.classList.add('cash');
-  },
-  showResult(score, best, isRecord, busted) {
-    $('result-score').textContent = score.toLocaleString();
-    $('result-best').textContent = 'Best ' + best.toLocaleString();
+  setBest(v) { if (v !== lastBest) { lastBest = v; $('best').textContent = v; } },
+  showResult(score, best, isRecord) {
+    $('result-score').textContent = score;
+    $('result-best').textContent = 'Best ' + best;
     const badge = $('result-badge');
-    badge.textContent = isRecord && score > 0 ? 'NEW BEST!' : (busted ? 'BUSTED' : 'GAME OVER');
+    badge.textContent = isRecord && score > 0 ? 'NEW BEST!' : 'CRASH';
     badge.classList.toggle('record', isRecord && score > 0);
     $('result').classList.remove('hidden');
   },
@@ -66,12 +44,13 @@ function begin() {
     game.onError = showError;
     document.body.classList.add('playing');
     $('start').classList.add('hidden');
+    setTimeout(() => $('hint').classList.add('fade'), 3500);
     game.start();
   } catch (e) { started = false; showError(e); }
 }
 
 const startEl = $('start');
 startEl.addEventListener('pointerdown', begin);
-addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !started) begin(); });
+addEventListener('keydown', (e) => { if ((e.key === 'Enter') && !started) begin(); });
 
 $('btn-again').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); if (game) game.restart(); });
