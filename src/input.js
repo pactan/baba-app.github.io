@@ -1,20 +1,17 @@
-// Input for NERVE: TAP anywhere = HOP (push your luck). BANK button = cash out.
-// Both edge-triggered (one action per press).
+// One-button input for SWING. HOLD anywhere = fire/keep the rope (swing).
+// RELEASE = let go and fly. That's the whole game.
 export class Input {
   constructor() {
-    this.hop = false;
-    this.bank = false;
-
-    addEventListener('pointerdown', (e) => {
-      const t = e.target;
-      if (t && (t.id === 'btn-again')) return;          // retry handles itself
-      if (t && (t.id === 'btn-bank')) { this.bank = true; return; }
-      this.hop = true;                                   // tap anywhere else = hop
-    });
-    addEventListener('keydown', (e) => {
-      if (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'Enter') { this.hop = true; e.preventDefault(); }
-      if (e.key === 'b' || e.key === 'B' || e.key === 'ArrowDown') { this.bank = true; e.preventDefault(); }
-    });
+    this.held = false;
+    const down = (e) => {
+      if (e.target && e.target.id === 'btn-again') return; // retry handles itself
+      this.held = true;
+    };
+    const up = () => { this.held = false; };
+    addEventListener('pointerdown', down);
+    addEventListener('pointerup', up);
+    addEventListener('pointercancel', up);
+    addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'ArrowUp') { this.held = true; e.preventDefault(); } });
+    addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'ArrowUp') { this.held = false; e.preventDefault(); } });
   }
-  endFrame() { this.hop = false; this.bank = false; }
 }

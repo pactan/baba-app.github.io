@@ -31,6 +31,28 @@ a NEW decision the player makes every few seconds (not present in either parent)
 ## 4. NOVELTY CHECK
 State the new decision in one sentence. If it's identical to a parent, reject.
 
+## RUN #3 — aiming for an "11": genius = depth from ONE physical verb
+The "11" games (Tony Hawk pro skater feel, Spider-Man swing, Desert Golfing,
+Getting Over It) share a secret: ONE physical action whose MASTERY is bottomless
+because it's pure continuous physics, not discrete states. You don't add rules —
+the rules are gravity + momentum, and the skill ceiling is infinite.
+
+Atom with the most-loved one-finger physics: **PENDULUM SWING / grappling**
+(Spider-Man, Hooked Inc, One More Line — all top-grossing). Fuse with the
+**endless score-runner** distance loop. The whole game is ONE verb: HOLD to
+fire/keep a rope to the nearest anchor and swing; RELEASE to let go and fly.
+
+→ **SWING** (codename ARC)
+The genius is there are no "levels", no enemies, no timing windows — just you,
+gravity, and momentum. Mastery = learning to release at the exact top of an arc
+to convert swing into distance, and to re-grab at the right moment. Same depth
+that made Spider-Man swinging the best part of a $100M game, in one thumb.
+New decision, continuously: "hold to keep building arc, or release NOW to launch
+along my current velocity vector?" Pure physics; infinitely masterable; trivial
+to read (you're swinging or flying); pure-logic verifiable (it's just a
+constrained pendulum + projectile). Keep it SIMPLE: one button (touch hold),
+auto-grapple to the nearest anchor ahead.
+
 ## RUN #2 — aiming for a 9.5 (a NEW *decision*, not a new skin)
 Self-critique of FLUX: its decision ("change colour in time") was identical to a
 parent (Color Switch). A reskin, not an invention. Score 6.
