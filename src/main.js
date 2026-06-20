@@ -1,10 +1,10 @@
-import { Game } from './game.js?v=15';
-import { Input } from './input.js?v=15';
-import { Audio } from './audio.js?v=15';
+import { Game } from './game.js?v=16';
+import { Input } from './input.js?v=16';
+import { Audio } from './audio.js?v=16';
 
 const $ = (id) => document.getElementById(id);
 
-let lastScore = -1, lastBest = -1;
+let lastScore = -1, lastBest = -1, lastCombo = -1;
 const hud = {
   setScore(v) {
     if (v !== lastScore) {
@@ -13,11 +13,17 @@ const hud = {
     }
   },
   setBest(v) { if (v !== lastBest) { lastBest = v; $('best').textContent = v; } },
+  setCombo(c) {
+    if (c === lastCombo) return; lastCombo = c;
+    const el = $('combo');
+    el.textContent = c >= 3 ? c + '× COMBO' : '';
+    el.classList.toggle('on', c >= 3);
+  },
   showResult(score, best, isRecord) {
     $('result-score').textContent = score;
     $('result-best').textContent = 'Best ' + best;
     const badge = $('result-badge');
-    badge.textContent = isRecord && score > 0 ? 'NEW BEST!' : 'GAME OVER';
+    badge.textContent = isRecord && score > 0 ? 'NEW BEST!' : 'CRASH';
     badge.classList.toggle('record', isRecord && score > 0);
     $('result').classList.remove('hidden');
   },
@@ -52,5 +58,4 @@ const startEl = $('start');
 startEl.addEventListener('pointerdown', begin);
 addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !started) begin(); });
 
-// retry restarts the run (and swallows the tap so it isn't read as a drop)
 $('btn-again').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); if (game) game.restart(); });
