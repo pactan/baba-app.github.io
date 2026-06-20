@@ -31,7 +31,28 @@ a NEW decision the player makes every few seconds (not present in either parent)
 ## 4. NOVELTY CHECK
 State the new decision in one sentence. If it's identical to a parent, reject.
 
-## 5. RUN #1 OUTPUT  → "FLUX"
+## RUN #2 — aiming for a 9.5 (a NEW *decision*, not a new skin)
+Self-critique of FLUX: its decision ("change colour in time") was identical to a
+parent (Color Switch). A reskin, not an invention. Score 6.
+Also: I cannot test *feel*, so reflex games cap my execution. Pick a concept
+whose FUN lives in a DECISION (tunable + headless-verifiable), not a reaction
+window I'm blind to.
+
+Highest-rated addictive loop in existence = **press-your-luck / greed**
+(slot machines, Balatro cash-outs, the dice game "Pig", Threes banking). Almost
+nobody ships it as a *one-tap spatial arcade* game. Fuse it with a simple
+hop-runner + a **streak multiplier you'd hate to lose** (Balatro/combo hook).
+
+→ **NERVE**
+New decision, every single tap: "hop one more tile — growing my pot AND my
+multiplier — but the bust-risk just went up and I can SEE it; or bank now and
+lock it in?" Greed is doubly tempting (more pot + higher mult), busting is doubly
+painful. Risk % is always shown BEFORE you hop, so it's informed risk = skill,
+not a slot machine. Two one-finger actions: TAP = hop, BANK button = cash out.
+Passes the filter, and crucially its fun is the stop/go math I can balance and
+unit-test — so I can actually execute it well, blind to feel.
+
+## RUN #1 OUTPUT  → "FLUX"
 Fusion: **Color-match reflex (Color Switch)** × **endless constant-speed runner
 (Flappy/Subway cadence)** + escalating combo multiplier.
 New decision: "the wall rushing at me is colour X — cycle my cube to X *before*
