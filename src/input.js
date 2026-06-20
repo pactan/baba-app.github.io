@@ -1,10 +1,9 @@
-// One-tap input for STACK. Any press anywhere = "drop". Edge-triggered.
+// One-tap input for FLUX. Any press = "cycle my colour". Edge-triggered.
 export class Input {
   constructor() {
     this.tapped = false;
     const fire = (e) => {
-      // ignore taps on the restart button (it has its own handler)
-      if (e.target && e.target.id === 'btn-again') return;
+      if (e.target && e.target.id === 'btn-again') return; // retry has its own handler
       this.tapped = true;
     };
     addEventListener('pointerdown', fire);
