@@ -60,6 +60,19 @@ function groupOf(name) {
   return 'limb';
 }
 
+// Joint LIMITS as min/max distance between the endpoints of a 2-bone chain.
+// This is the clean Verlet trick for angle limits: a near-straight chain has a
+// large end-to-end distance, a folded one a small distance. Clamping that
+// distance to [min,max] of the straightened length prevents BOTH hyperextension
+// (inverted elbow/knee) and over-folding — Euphoria never bends past anatomy.
+// [endA, endB, minFrac, maxFrac] where fracs are of the straight (summed) length.
+const LIMITS = [
+  ['shL', 'haL', 0.30, 0.97], ['shR', 'haR', 0.30, 0.97],   // elbows
+  ['hipL', 'ftL', 0.45, 0.98], ['hipR', 'ftR', 0.45, 0.98], // knees
+  ['chest', 'head', 0.55, 1.02],                            // neck (no snapping)
+  ['pelvis', 'chest', 0.80, 1.04],                          // spine (semi-rigid)
+];
+
 export class Ragdoll {
   constructor() {
     this.P = [];                 // particles
@@ -73,6 +86,15 @@ export class Ragdoll {
       const pa = this.byName[a], pb = this.byName[b];
       return { a: pa, b: pb, rest: pa.pos.distanceTo(pb.pos), s };
     });
+    // precompute the straight length of each limit chain (sum of its 2 bones)
+    this.limits = LIMITS.map(([a, b, lo, hi]) => {
+      const pa = this.byName[a], pb = this.byName[b];
+      // straight length = direct distance when the chain is fully extended at spawn
+      const straight = pa.pos.distanceTo(pb.pos);
+      return { a: pa, b: pb, min: straight * lo, max: straight * hi };
+    });
+    this.flinch = 0;            // 0..1 self-protective brace level (raises after a hit)
+    this.flinchDir = new THREE.Vector3(0, 0, -1);
     // rest posture offsets from the pelvis (the "muscle memory" of standing)
     this.restOff = {};
     const pv = this.byName['pelvis'].pos;
@@ -123,14 +145,15 @@ export class Ragdoll {
     //    (consciousness 0) gets nothing and collapses into a pure ragdoll.
     this._muscles(env, dt);
 
-    // 3) constraint relaxation (bone lengths) + collisions
+    // 3) constraint relaxation (bone lengths) + ANGLE LIMITS + collisions
     for (let it = 0; it < ITER; it++) {
       for (const c of this.bones) this._solveBone(c);
+      for (const L of this.limits) this._solveLimit(L);   // no inverted joints
       this._collide(env);
     }
 
-    // slow consciousness recovery while still alive (lets repeated chest hits
-    // eventually KO, while a single chest hit is survived)
+    // flinch decays; consciousness slowly recovers while alive
+    this.flinch = Math.max(0, this.flinch - 1.2 * dt);
     if (this.consciousness > 0.02) this.consciousness = Math.min(1, this.consciousness + 0.06 * dt);
   }
 
@@ -167,6 +190,27 @@ export class Ragdoll {
       p.pos.y = lerp(p.pos.y, pelvis.pos.y + off.y, stand);
       p.pos.z = lerp(p.pos.z, pelvis.pos.z + off.z, stand);
     }
+
+    // PROTECTIVE BRACE — Euphoria's signature. When recently hit (flinch>0) and
+    // still conscious, the hands reach UP toward the face/threat to shield the
+    // head, and the head tucks slightly away from the incoming direction.
+    if (this.flinch > 0.02) {
+      const f = this.flinch * k;
+      const head = this.byName['head'].pos;
+      const guardY = head.y - 0.05, guardF = -this.flinchDir.z;  // in front of face
+      const reach = 0.55 * f;
+      for (const hand of ['haL', 'haR']) {
+        const h = this.byName[hand].pos;
+        const sx = hand === 'haL' ? -0.12 : 0.12;
+        h.x = lerp(h.x, head.x + sx, reach);
+        h.y = lerp(h.y, guardY, reach);
+        h.z = lerp(h.z, head.z + guardF * 0.18, reach);
+      }
+      // flinch the head away from the blow + duck the chest
+      head.x = lerp(head.x, head.x - this.flinchDir.x * 0.12 * f, 0.5);
+      const chest = this.byName['chest'].pos;
+      chest.y = lerp(chest.y, chest.y - 0.08 * f, 0.4);
+    }
   }
 
   _solveBone(c) {
@@ -179,6 +223,21 @@ export class Ragdoll {
     dx *= diff; dy *= diff; dz *= diff;
     ax.x += dx * wa * 2 * 0.5; ax.y += dy * wa * 2 * 0.5; ax.z += dz * wa * 2 * 0.5;
     bx.x -= dx * wb * 2 * 0.5; bx.y -= dy * wb * 2 * 0.5; bx.z -= dz * wb * 2 * 0.5;
+  }
+
+  // clamp the end-to-end distance of a 2-bone chain into [min,max] so the joint
+  // can neither hyperextend (invert) nor crush through itself.
+  _solveLimit(L) {
+    const ax = L.a.pos, bx = L.b.pos;
+    let dx = bx.x - ax.x, dy = bx.y - ax.y, dz = bx.z - ax.z;
+    let d = Math.hypot(dx, dy, dz) || 1e-6;
+    let target = d;
+    if (d > L.max) target = L.max; else if (d < L.min) target = L.min; else return;
+    const diff = ((d - target) / d) * 0.5;
+    const wa = L.a.invMass / (L.a.invMass + L.b.invMass), wb = 1 - wa;
+    dx *= diff; dy *= diff; dz *= diff;
+    ax.x += dx * wa; ax.y += dy * wa; ax.z += dz * wa;
+    bx.x -= dx * wb; bx.y -= dy * wb; bx.z -= dz * wb;
   }
 
   _collide(env) {
@@ -225,6 +284,11 @@ export class Ragdoll {
     }
     const grp = p.group;
     const J = power * 0.06;                 // impulse magnitude from arrow speed
+
+    // raise the self-protective brace (hands fly up to guard) — but a clean head
+    // KO skips it: you can't brace if you're already out cold.
+    this.flinchDir.copy(dir).normalize();
+    if (grp !== 'head') this.flinch = Math.min(1, this.flinch + clamp(power / 70, 0.3, 1));
 
     // apply the impulse to the struck joint, with falloff to its neighbours so
     // the whole limb/torso reacts as a chain (not a single dot popping)
