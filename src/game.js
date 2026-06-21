@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Ragdoll } from './physics.js?v=21';
+import { Ragdoll } from './physics.js?v=22';
 // Bloom is loaded dynamically below so a missing addon can't block startup.
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));

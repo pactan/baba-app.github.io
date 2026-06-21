@@ -112,6 +112,8 @@ export class Ragdoll {
       this.P[i].prev.copy(this.P[i].pos);
     }
     this.consciousness = 1; this.health = 1;
+    this.flinch = 0; this._woundJoint = null; this._clutchHand = null;
+    this._stepFoot = null; this._stepT = 1; this._stepCool = 0;
   }
 
   get knockedOut() { return this.consciousness <= 0.02; }
@@ -174,16 +176,50 @@ export class Ragdoll {
     pelvis.pos.y = lerp(pelvis.pos.y, tpy, balance * 0.5);
     pelvis.pos.z = lerp(pelvis.pos.z, tpz, balance * 0.35);
 
+    // ---- PROTECTIVE STEPPING — the true Euphoria balance recovery -----------
+    // Where is the CoM relative to the foot base? If it has drifted past the
+    // support, the figure must STEP a foot out under the falling CoM to catch
+    // itself (a stagger), not just stiffly snap back. This is what turns a chest
+    // shove into a believable backward stagger-and-recover.
+    const com = this.com(this._comTmp || (this._comTmp = new THREE.Vector3()));
+    const offX = com.x - fmX, offZ = com.z - fmZ;
+    const lean = Math.hypot(offX, offZ);
+    const STEP_TRIG = 0.16;       // CoM drift that triggers a catch-step
+    if (this._stepCool === undefined) this._stepCool = 0;
+    this._stepCool = Math.max(0, this._stepCool - dt);
+
+    if (lean > STEP_TRIG && this._stepCool === 0) {
+      // step the foot that is on the TRAILING side (behind the fall) out past CoM
+      const nx = offX / lean, nz = offZ / lean;
+      const dL = (ftL.x - fmX) * nx + (ftL.z - fmZ) * nz;
+      const dR = (ftR.x - fmX) * nx + (ftR.z - fmZ) * nz;
+      this._stepFoot = dL < dR ? 'ftL' : 'ftR';
+      // target sits just past the foot midpoint toward the fall — a small,
+      // BOUNDED stagger (≤ STRIDE), so it catches itself instead of moonwalking.
+      const STRIDE = 0.42;
+      const reach = Math.min(lean + 0.12, STRIDE);
+      this._stepTarget = { x: fmX + nx * reach, z: fmZ + nz * reach };
+      this._stepT = 0; this._stepCool = 0.42;     // pacing between steps
+    }
+
     // pull the rest of the body toward pelvis + its standing offset (posture)
     for (const p of this.P) {
       if (p.name === 'pelvis') continue;
       const off = this.restOff[p.name];
-      // feet are special: keep them near the ground, under the hips, with light
-      // pull so the figure can shuffle/step to recover balance
       if (p.name === 'ftL' || p.name === 'ftR') {
-        const tx = pelvis.pos.x + off.x, tz = pelvis.pos.z + off.z;
-        p.pos.x = lerp(p.pos.x, tx, stand * 0.5);
-        p.pos.z = lerp(p.pos.z, tz, stand * 0.5);
+        // a foot that is mid-step lifts and reaches its catch target; otherwise
+        // it stays planted under the hips.
+        if (this._stepFoot === p.name && this._stepT < 1) {
+          this._stepT = Math.min(1, this._stepT + dt / 0.18);
+          const lift = Math.sin(this._stepT * Math.PI) * 0.22;   // arc up then down
+          p.pos.x = lerp(p.pos.x, this._stepTarget.x, 0.4);
+          p.pos.z = lerp(p.pos.z, this._stepTarget.z, 0.4);
+          p.pos.y = lerp(p.pos.y, env.groundY(p.pos.x, p.pos.z) + p.r + lift, 0.5);
+        } else {
+          const tx = pelvis.pos.x + off.x, tz = pelvis.pos.z + off.z;
+          p.pos.x = lerp(p.pos.x, tx, stand * 0.5);
+          p.pos.z = lerp(p.pos.z, tz, stand * 0.5);
+        }
         continue;
       }
       p.pos.x = lerp(p.pos.x, pelvis.pos.x + off.x, stand);
@@ -192,21 +228,21 @@ export class Ragdoll {
     }
 
     // PROTECTIVE BRACE — Euphoria's signature. When recently hit (flinch>0) and
-    // still conscious, the hands reach UP toward the face/threat to shield the
-    // head, and the head tucks slightly away from the incoming direction.
+    // still conscious, a hand reaches toward the WOUND (clutch) while the other
+    // shields the head; the head tucks away from the blow and the chest ducks.
     if (this.flinch > 0.02) {
       const f = this.flinch * k;
       const head = this.byName['head'].pos;
-      const guardY = head.y - 0.05, guardF = -this.flinchDir.z;  // in front of face
-      const reach = 0.55 * f;
-      for (const hand of ['haL', 'haR']) {
-        const h = this.byName[hand].pos;
-        const sx = hand === 'haL' ? -0.12 : 0.12;
-        h.x = lerp(h.x, head.x + sx, reach);
-        h.y = lerp(h.y, guardY, reach);
-        h.z = lerp(h.z, head.z + guardF * 0.18, reach);
+      const reach = clamp(0.85 * f, 0, 0.9);
+      // clutch hand -> the live struck joint; guard hand -> the face
+      const clutch = this._clutchHand || 'haR', guard = clutch === 'haR' ? 'haL' : 'haR';
+      const wj = this._woundJoint;
+      if (wj && wj.name !== clutch) {
+        const w = wj.pos, hc = this.byName[clutch].pos;
+        hc.x = lerp(hc.x, w.x, reach); hc.y = lerp(hc.y, w.y + 0.06, reach); hc.z = lerp(hc.z, w.z + 0.1, reach);
       }
-      // flinch the head away from the blow + duck the chest
+      const hg = this.byName[guard].pos, sx = guard === 'haL' ? -0.1 : 0.1;
+      hg.x = lerp(hg.x, head.x + sx, reach); hg.y = lerp(hg.y, head.y - 0.05, reach); hg.z = lerp(hg.z, head.z + 0.2, reach);
       head.x = lerp(head.x, head.x - this.flinchDir.x * 0.12 * f, 0.5);
       const chest = this.byName['chest'].pos;
       chest.y = lerp(chest.y, chest.y - 0.08 * f, 0.4);
@@ -288,7 +324,17 @@ export class Ragdoll {
     // raise the self-protective brace (hands fly up to guard) — but a clean head
     // KO skips it: you can't brace if you're already out cold.
     this.flinchDir.copy(dir).normalize();
-    if (grp !== 'head') this.flinch = Math.min(1, this.flinch + clamp(power / 70, 0.3, 1));
+    if (grp !== 'head') {
+      this.flinch = Math.min(1, this.flinch + clamp(power / 70, 0.3, 1));
+      // clutch the STRUCK JOINT (it moves, so the hand tracks the live wound).
+      // a hand never clutches itself — pick the opposite hand for hand/arm hits.
+      this._woundJoint = p;
+      let cand = ['haL', 'haR'];
+      if (p.name === 'haL' || p.name === 'elL') cand = ['haR'];
+      else if (p.name === 'haR' || p.name === 'elR') cand = ['haL'];
+      this._clutchHand = cand.length === 1 ? cand[0]
+        : (this.byName['haL'].pos.distanceToSquared(point) < this.byName['haR'].pos.distanceToSquared(point) ? 'haL' : 'haR');
+    }
 
     // apply the impulse to the struck joint, with falloff to its neighbours so
     // the whole limb/torso reacts as a chain (not a single dot popping)
