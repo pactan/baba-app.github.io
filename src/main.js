@@ -1,24 +1,42 @@
-import { Game } from './game.js?v=19';
-import { Input } from './input.js?v=19';
-import { Audio } from './audio.js?v=19';
+import { Game } from './game.js?v=20';
+import { Input } from './input.js?v=20';
+import { Audio } from './audio.js?v=20';
 
 const $ = (id) => document.getElementById(id);
 
-let lastScore = -1, lastBest = -1;
+let lastShots = -1, lastBest = -1, lastPow = -1, lastLevel = '', lastGoal = '';
 const hud = {
-  setScore(v) {
-    if (v !== lastScore) {
-      lastScore = v; const el = $('score'); el.textContent = v;
-      el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
-    }
+  setShots(v) { if (v !== lastShots) { lastShots = v; $('shots').textContent = v; } },
+  setBest(v) { if (v !== lastBest) { lastBest = v; } },
+  setPower(v) {
+    const pct = Math.round(v * 100);
+    if (pct !== lastPow) { lastPow = pct; $('power-fill').style.height = pct + '%';
+      $('power-btn').classList.toggle('hot', v > 0.8); }
   },
-  setBest(v) { if (v !== lastBest) { lastBest = v; $('best').textContent = v; } },
-  showResult(score, best, isRecord) {
+  setLevel(n, total, name) {
+    const k = n + '/' + total;
+    if (k !== lastLevel) { lastLevel = k; $('level').textContent = k; $('levelname').textContent = name; }
+  },
+  setGoal(g) {
+    if (g === lastGoal) return; lastGoal = g;
+    $('goal').textContent = g === 'topple' ? 'KNOCK IT OFF THE LEDGE' : 'KNOCK IT OUT';
+  },
+  setReticle(x, y) {
+    const el = $('reticle');
+    el.style.left = (x * 100) + '%'; el.style.top = ((1 - y) * 100) + '%';
+  },
+  flash(text) {
+    const el = $('flash'); el.textContent = text;
+    el.classList.remove('on'); void el.offsetWidth; el.classList.add('on');
+  },
+  showResult(score, best, isRecord, shots, level, total) {
     $('result-score').textContent = score;
+    $('result-sub').textContent = shots + ' ARROW' + (shots === 1 ? '' : 'S') + ' · SCORE';
     $('result-best').textContent = 'Best ' + best;
     const badge = $('result-badge');
-    badge.textContent = isRecord && score > 0 ? 'NEW BEST!' : 'GAME OVER';
+    badge.textContent = isRecord && score > 0 ? 'NEW BEST!' : 'CLEARED!';
     badge.classList.toggle('record', isRecord && score > 0);
+    $('btn-next').textContent = level >= total ? 'LEVEL 1' : 'NEXT LEVEL';
     $('result').classList.remove('hidden');
   },
   hideResult() { $('result').classList.add('hidden'); },
@@ -50,6 +68,7 @@ function begin() {
 
 const startEl = $('start');
 startEl.addEventListener('pointerdown', begin);
-addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !started) begin(); });
+addEventListener('keydown', (e) => { if ((e.key === 'Enter') && !started) begin(); });
 
 $('btn-again').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); if (game) game.restart(); });
+$('btn-next').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); if (game) game.nextLevel(); });
