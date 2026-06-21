@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Ragdoll } from './physics.js?v=20';
+import { Ragdoll } from './physics.js?v=21';
 // Bloom is loaded dynamically below so a missing addon can't block startup.
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -91,26 +91,34 @@ export class Game {
     function slope(x, z) { return clamp(2.0 - (z + 6) * 0.0 - Math.abs(x) * 0.18, -2, 2) * 0.0 + Math.max(0, 1.5 - Math.hypot(x, z + 2) * 0.12); }
   }
 
-  // a simple capsule-ish humanoid skin: a sphere per joint + a tube per bone,
-  // all driven by the physics particle positions each frame.
+  // an organic humanoid skin: smooth joint blobs + CAPSULE limbs (rounded ends)
+  // so it reads as a body, not a tube robot — driven by the physics particles.
   _buildRagdollMesh() {
     this.skin = new THREE.Group();
-    const mat = new THREE.MeshStandardMaterial({ color: 0xb9c4ff, roughness: 0.45, metalness: 0.05 });
+    const mat = new THREE.MeshStandardMaterial({ color: 0xc2ccf2, roughness: 0.42, metalness: 0.04 });
+    this.skinMat = mat;
     this.jointMeshes = {};
+    // limbs are thinner, torso joints fuller, so silhouette looks human
+    const jr = (n, r) => ({ head: 0.20, neck: 0.10, chest: 0.07, spine: 0.07, pelvis: 0.10 }[n] ?? r * 0.9);
     for (const p of this.ragdoll.P) {
-      const m = new THREE.Mesh(new THREE.SphereGeometry(p.r * 1.25, 14, 12), mat);
+      const m = new THREE.Mesh(new THREE.SphereGeometry(jr(p.name, p.r), 16, 12), mat);
       m.castShadow = true; this.skin.add(m); this.jointMeshes[p.name] = m;
     }
-    // head gets eyes for character (matches the reference figure)
+    // head: eyes (match the reference figure)
     const head = this.jointMeshes['head'];
     const eyeMat = new THREE.MeshStandardMaterial({ color: 0x1a2233, roughness: 0.4 });
     for (const sx of [-1, 1]) {
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 8), eyeMat);
-      eye.position.set(sx * 0.06, 0.03, 0.14); head.add(eye);
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 10), eyeMat);
+      eye.position.set(sx * 0.07, 0.03, 0.17); head.add(eye);
     }
-    this.boneMeshes = this.ragdoll.bones.map(() => {
-      const m = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1, 8), mat);
-      m.castShadow = true; this.skin.add(m); return m;
+    // capsule limbs: thicker for torso bones, slim for arms/legs
+    const TORSO = new Set(['pelvis-spine', 'spine-chest', 'chest-pelvis', 'chest-hipL', 'chest-hipR', 'pelvis-hipL', 'pelvis-hipR', 'hipL-hipR', 'shL-shR']);
+    this.boneMeshes = this.ragdoll.bones.map((c) => {
+      const key = c.a.name + '-' + c.b.name;
+      const thick = TORSO.has(key) ? 0.13 : (key.includes('head') || key.includes('neck')) ? 0.09 : 0.075;
+      const geo = new THREE.CapsuleGeometry(thick, 1, 4, 10);
+      const m = new THREE.Mesh(geo, mat); m.castShadow = true; m.userData.thick = thick;
+      this.skin.add(m); return m;
     });
     this.scene.add(this.skin);
     this._up = new THREE.Vector3(0, 1, 0);
@@ -341,13 +349,15 @@ export class Game {
       const a = c.a.pos, b = c.b.pos;
       m.position.copy(a).add(b).multiplyScalar(0.5);
       const d = b.clone().sub(a); const len = d.length();
-      m.scale.set(1, Math.max(0.01, len), 1);
+      // capsule base cylinder length is 1; subtract the two rounded caps so the
+      // visible capsule spans exactly the bone (no overshoot past the joints).
+      const cyl = Math.max(0.02, len - 2 * (m.userData.thick || 0.08));
+      m.scale.set(1, cyl, 1);
       m.quaternion.setFromUnitVectors(this._up, d.normalize());
     }
     // tint the whole skin toward grey as it loses consciousness (visual KO read)
     const c01 = this.ragdoll.consciousness;
-    const col = this.jointMeshes['head'].material.color;
-    col.setRGB(lerp(0.55, 0.72, c01), lerp(0.55, 0.77, c01), lerp(0.6, 1.0, c01));
+    this.skinMat.color.setRGB(lerp(0.5, 0.76, c01), lerp(0.5, 0.8, c01), lerp(0.56, 0.95, c01));
 
     this._stepFxRender();
 
