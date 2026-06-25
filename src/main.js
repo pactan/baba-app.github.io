@@ -1,6 +1,6 @@
-import { Game } from './game.js?v=23';
-import { Input } from './input.js?v=23';
-import { Audio } from './audio.js?v=23';
+import { Game } from './game.js?v=24';
+import { Input } from './input.js?v=24';
+import { Audio } from './audio.js?v=24';
 
 const $ = (id) => document.getElementById(id);
 let lastDist = -1, lastBest = -1, lastCombo = -1, lastPow = -1, lastPhase = '';
