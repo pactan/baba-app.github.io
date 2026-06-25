@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Ragdoll } from './physics.js?v=24';
+import { Ragdoll } from './physics.js?v=25';
 // Bloom is loaded dynamically below so a missing addon can't block startup.
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -225,6 +225,7 @@ export class Game {
       this.tucking = held;
       this.ragdoll.muscleScale = held ? 0.0 : 1.0;   // open up (re-engage) on release => catch the landing
       if (held) this._addSpin(TUCK_SPIN * sdt);
+      else this._landingAssist(sdt);                 // open + falling => actively right toward feet-down (skill-scaled)
       this.audio.tuck(held && this.spin !== 0 ? 1 : 0);
       // accumulate body rotation (head-relative-to-pelvis angle) for a flip bonus
       const hd = this.ragdoll.byName['head'].pos, pl = this.ragdoll.byName['pelvis'].pos;
@@ -272,6 +273,7 @@ export class Game {
       p.prev.y = p.pos.y - vy * (1 / 120);
     }
     this.phase = 'flying'; this.launched = true; this.airTime = 0; this.power = 0;
+    this.runSpeed = speed;                              // authoritative run speed (escalates per clean stick)
     this.flipAccum = 0; this._lastBodyAng = null;       // track rotations this flight
     this.hud.setPower(0); this.hud.setPhase('flying');
     this.audio.launch(); this._shake(0.3); this._burst(this.ragdoll.byName['pelvis'].pos, 0xffffff, 12);
@@ -289,61 +291,80 @@ export class Game {
     this.spin += amount;
   }
 
-  _checkLanding(dt) {
-    // are the feet on the ground and the body moving slow vertically?
-    const ft = (this.ragdoll.byName['ftL'].pos.y + this.ragdoll.byName['ftR'].pos.y) * 0.5;
-    const head = this.ragdoll.byName['head'].pos.y;
-    const pelY = this.ragdoll.byName['pelvis'].pos.y;
-    const onGround = ft < 0.25;
-    if (this.airTime < 0.25 || !onGround) return;   // ignore the very first frames
+  // body verticality: +1 = head straight up over feet (upright), 0 = sideways,
+  // -1 = inverted. Pure function of the player's flip timing — what they control.
+  _verticality() {
+    const ftL = this.ragdoll.byName['ftL'].pos, ftR = this.ragdoll.byName['ftR'].pos, hp = this.ragdoll.byName['head'].pos;
+    const ax = hp.x - (ftL.x + ftR.x) * 0.5, ay = hp.y - (ftL.y + ftR.y) * 0.5, az = hp.z - (ftL.z + ftR.z) * 0.5;
+    const L = Math.hypot(ax, ay, az) || 1;
+    return ay / L;
+  }
 
-    // --- landing QUALITY, not a binary. This is the skill gradient. ---
-    // uprightness: how vertical the torso is (head over pelvis over feet).
-    const torsoUp = (head - pelY) / 0.55;                 // ~1 when fully upright
-    const stance = (pelY - ft) / 0.55;
-    const uprightQ = clamp(Math.min(torsoUp, stance), 0, 1);
-    const vy = this._pelvisVel().y;
-    const softQ = clamp(1 + vy / 0.5, 0, 1);              // 1 = gentle, 0 = slammed
-    // TIMING is the skill: if the player is still TUCKING (curled, muscles off)
-    // at the moment of contact, they can't plant their feet => they flop. You
-    // must release the tuck just before landing. This makes flip-timing matter.
-    if (this.tucking) { return this._die(); }
-    const landQ = uprightQ * (0.5 + 0.5 * softQ);         // 0..1 overall quality
-
-    if (uprightQ > 0.35) {
-      // STICK! quality scales the reward — clean feet-first landings pay far more.
-      this.phase = 'landed'; this.landTimer = 0;
-      this.sticks++; this.combo++;
-      // tiered feedback so the player feels the skill ceiling
-      let tier = 'STICK';
-      if (landQ > 0.82) tier = 'PERFECT';
-      else if (landQ > 0.6) tier = 'CLEAN';
-      this.lastTier = tier;
-      // RE-LAUNCH into the next hop: convert kept horizontal speed into a fresh
-      // forward+up bound. Quality + combo compound the speed => skilled chains
-      // travel dramatically further (the addictive mastery curve).
-      const fwd = Math.abs(this._pelvisVel().x) / (1 / 60);          // current speed (u/s)
-      const keep = 0.80 + landQ * 0.22 + Math.min(this.combo, 8) * 0.015;
-      const newSpeed = Math.max(8, fwd * keep);
-      const hopAng = 0.5;                                            // a flat, fast bound
-      const nvx = Math.cos(hopAng) * newSpeed, nvy = Math.sin(hopAng) * newSpeed;
-      for (const p of this.ragdoll.P) { p.prev.x = p.pos.x - nvx * (1 / 120); p.prev.y = p.pos.y - nvy * (1 / 120); }
-      // FLIP BONUS — whole rotations landed this flight. This is what makes the
-      // tuck/flip skill pay off: a triple-flip stick scores far above a flat hop.
-      const flips = Math.floor(this.flipAccum / (Math.PI * 2));
-      if (flips >= 1) { this.dist += flips * 8 * (tier === 'PERFECT' ? 1.6 : 1); this.hud.flash(flips + (flips > 1 ? ' FLIPS!' : ' FLIP!')); }
-      this.flipAccum = 0; this._lastBodyAng = null;
-      // small flat quality bonus so a clean landing always nudges the score
-      this.dist += Math.round(landQ * 4 + (tier === 'PERFECT' ? 5 : 0));
-      this.audio.stick(this.combo + flips + (tier === 'PERFECT' ? 4 : 0));
-      this._burst(this.ragdoll.byName['ftL'].pos, tier === 'PERFECT' ? 0x6affd0 : 0xffd23a, tier === 'PERFECT' ? 26 : 16);
-      this._shake(0.3 + landQ * 0.2); this.slowmo = tier === 'PERFECT' ? 0.28 : 0.4;
-      const label = (tier === 'STICK' ? 'STICK' : tier) + (this.combo > 1 ? ' ×' + this.combo : '') + (tier === 'PERFECT' ? '!' : '');
-      this.hud.flash(label); this.hud.setCombo(this.combo); this.hud.setPhase('landed');
-    } else if (head < 0.5 || pelY < 0.45) {
-      // FACEPLANT — comedy flop, run ends
-      this._die();
+  // While OPEN (released) and airborne, actively rotate toward feet-down — but
+  // the assist's AUTHORITY scales with how upright you already are. Release
+  // near-upright => it cleanly finishes the rotation (forgiving, learnable).
+  // Release while inverted/sideways => it can't save you => you flop. THIS is
+  // what makes the tuck-release a fair, learnable skill instead of luck.
+  _landingAssist(dt) {
+    if (this.airTime < 0.12) return;
+    const vert = this._verticality();
+    if (vert > 0.97) return;
+    const authority = clamp((vert + 0.85) / 1.3, 0, 1);   // forgiving: strong help unless badly inverted
+    if (authority <= 0.02) return;
+    const w = (1 - vert) * 15 * authority * dt;           // proportional righting torque (about z, x-y plane)
+    const com = this.ragdoll.com();
+    const dirSign = (this.ragdoll.byName['head'].pos.x - com.x) >= 0 ? 1 : -1;
+    for (const p of this.ragdoll.P) {
+      const rx = p.pos.x - com.x, ry = p.pos.y - com.y;
+      p.prev.x += -w * ry * dirSign;   // shift prev opposite the velocity we add (Verlet)
+      p.prev.y += w * rx * dirSign;
     }
+  }
+
+  _checkLanding(dt) {
+    const ftL = this.ragdoll.byName['ftL'].pos, ftR = this.ragdoll.byName['ftR'].pos;
+    const head = this.ragdoll.byName['head'].pos.y, pelY = this.ragdoll.byName['pelvis'].pos.y;
+    const ft = (ftL.y + ftR.y) * 0.5;
+    // contact = the lowest body point touches down (so we judge at true impact)
+    const lowest = Math.min(ft, pelY, head);
+    if (this.airTime < 0.22 || lowest > 0.3) return;
+
+    // quality from verticality at impact (timing-driven) × softness
+    const vert = this._verticality();
+    const uprightQ = clamp(vert, 0, 1);
+    const vy = this._pelvisVel().y;
+    const softQ = clamp(1 + vy / 0.6, 0, 1);
+    const landQ = uprightQ * (0.55 + 0.45 * softQ);
+    // still tucking at impact, or clearly not upright => FLOP (the fail state).
+    // threshold eases the first few sticks (onboarding ramp) then tightens, so
+    // newcomers reliably get going and learn the rhythm before difficulty bites.
+    const failGate = this.sticks < 3 ? 0.12 : 0.3;
+    if (this.tucking || uprightQ < failGate || head < pelY + 0.05) return this._die();
+
+    // STICK!
+    this.phase = 'landed'; this.landTimer = 0;
+    this.sticks++; this.combo++;
+    let tier = 'STICK';
+    if (landQ > 0.85) tier = 'PERFECT'; else if (landQ > 0.62) tier = 'CLEAN';
+    this.lastTier = tier;
+    // ESCALATING run speed (authoritative; survives landing damping). A clean
+    // stick speeds you up, a scrappy one barely; faster => flatter arc => the
+    // timing window tightens. This is the rising difficulty curve.
+    const add = landQ > 0.78 ? 1.7 : landQ > 0.6 ? 0.8 : 0.2;
+    this.runSpeed = clamp((this.runSpeed || 14) + add, 10, 40);
+    const hopAng = 0.66 - clamp((this.runSpeed - 15) * 0.012, 0, 0.30);
+    const nvx = Math.cos(hopAng) * this.runSpeed, nvy = Math.sin(hopAng) * this.runSpeed;
+    for (const p of this.ragdoll.P) { p.prev.x = p.pos.x - nvx * (1 / 120); p.prev.y = p.pos.y - nvy * (1 / 120); }
+    // flip bonus + quality bonus
+    const flips = Math.floor(this.flipAccum / (Math.PI * 2));
+    if (flips >= 1) { this.dist += flips * 8 * (tier === 'PERFECT' ? 1.6 : 1); this.hud.flash(flips + (flips > 1 ? ' FLIPS!' : ' FLIP!')); }
+    this.flipAccum = 0; this._lastBodyAng = null;
+    this.dist += Math.round(landQ * 4 + (tier === 'PERFECT' ? 6 : 0));
+    this.audio.stick(this.combo + flips + (tier === 'PERFECT' ? 4 : 0));
+    this._burst(ftL, tier === 'PERFECT' ? 0x6affd0 : 0xffd23a, tier === 'PERFECT' ? 26 : 16);
+    this._shake(0.28 + landQ * 0.2); this.slowmo = tier === 'PERFECT' ? 0.28 : 0.42;
+    const label = tier + (this.combo > 1 ? ' ×' + this.combo : '') + (tier === 'PERFECT' ? '!' : '');
+    this.hud.flash(label); this.hud.setCombo(this.combo); this.hud.setPhase('landed');
   }
 
   _die() {
