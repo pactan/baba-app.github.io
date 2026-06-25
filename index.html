@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <meta name="theme-color" content="#9fb6d8" />
-  <title>RAGDOLL RANGE</title>
-  <link rel="stylesheet" href="styles.css?v=22" />
+  <meta name="theme-color" content="#bfe0e8" />
+  <title>STICK!</title>
+  <link rel="stylesheet" href="styles.css?v=23" />
   <script type="importmap">
   {
     "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      "three": "./vendor/three/three.module.js?v=23",
+      "three/addons/": "./vendor/three/addons/"
     }
   }
   </script>
@@ -18,54 +18,38 @@
 <body>
   <canvas id="scene"></canvas>
 
-  <!-- aim reticle -->
-  <div id="reticle"><div class="ring"></div><div class="dot"></div></div>
-
-  <!-- HUD -->
   <div id="hud">
-    <div id="top">
-      <div class="col left"><div id="level">1/3</div><div class="sub" id="levelname">RANGE</div></div>
-      <div class="col mid"><div id="goal">KNOCK IT OUT</div></div>
-      <div class="col right"><div id="shots">0</div><div class="sub">ARROWS</div></div>
-    </div>
+    <div id="dist">0<span class="m">m</span></div>
+    <div id="best-row">BEST <span id="best">0</span>m</div>
+    <div id="combo"></div>
     <div id="flash"></div>
+    <!-- power meter (only during wind-up) -->
+    <div id="power-wrap"><div id="power-meter"><div id="power-fill"></div></div><div id="power-zone"></div></div>
+    <!-- contextual hint -->
+    <div id="hint">HOLD to wind up · release to launch</div>
   </div>
 
-  <!-- controls: left = hold-to-power, right = aim joystick -->
-  <div id="controls">
-    <div id="power-wrap">
-      <div id="power-meter"><div id="power-fill"></div></div>
-      <button id="power-btn">HOLD<br>POWER</button>
-    </div>
-    <div id="stick"><div id="stick-nub"></div></div>
-  </div>
-
-  <!-- results -->
   <div id="result" class="hidden">
     <div class="card">
-      <div id="result-badge">CLEARED!</div>
-      <div id="result-score">0</div>
-      <div class="rsub" id="result-sub">SCORE</div>
-      <div id="result-best">Best 0</div>
-      <div class="btnrow">
-        <button id="btn-again" class="again ghost">RETRY</button>
-        <button id="btn-next" class="again">NEXT LEVEL</button>
-      </div>
+      <div id="result-badge">NICE!</div>
+      <div id="result-score">0<span class="m">m</span></div>
+      <div id="result-line">0 sticks</div>
+      <div id="result-best">Best 0m</div>
+      <button id="btn-again" class="again">GO AGAIN</button>
     </div>
   </div>
 
-  <!-- start -->
   <div id="start">
     <div class="launch">
-      <div id="bow-icon">🏹</div>
-      <div class="name">RAGDOLL RANGE</div>
-      <div class="sub"><b>Right stick</b> aims · <b>Hold POWER</b> then release to fire.<br/>Hit the <b>head</b> to knock it out cold — hit the <b>chest</b> to send it flying.<br/>Active-ragdoll physics: it braces, staggers and recovers.</div>
+      <div id="guy">🤸</div>
+      <div class="name">STICK<span class="bang">!</span></div>
+      <div class="sub"><b>Hold</b> to wind up, release to launch.<br/><b>Hold</b> in the air to tuck &amp; flip — let go to open up<br/>and <b>stick the landing</b> feet-first to chain combos &amp; fly further.</div>
       <div class="tap">Tap to start</div>
       <div id="err"></div>
     </div>
-    <div id="ver">build v22</div>
+    <div id="ver">build v23</div>
   </div>
 
-  <script type="module" src="src/main.js?v=22"></script>
+  <script type="module" src="src/main.js?v=23"></script>
 </body>
 </html>

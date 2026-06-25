@@ -160,8 +160,8 @@ export class Ragdoll {
   }
 
   _muscles(env, dt) {
-    const k = this.consciousness;
-    if (k <= 0.02) return;       // knocked out => no muscle => limp
+    const k = this.consciousness * (this.muscleScale ?? 1);  // host can relax muscles (mid-flip tuck) then re-engage to catch a landing
+    if (k <= 0.02) return;       // knocked out / fully relaxed => no muscle => limp
     const stand = 0.16 * k;      // posture stiffness
     const balance = 0.5 * k;     // how hard it fights to stay over its feet
 
