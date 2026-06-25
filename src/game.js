@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Ragdoll } from './physics.js?v=23';
+import { Ragdoll } from './physics.js?v=24';
 // Bloom is loaded dynamically below so a missing addon can't block startup.
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -226,6 +226,19 @@ export class Game {
       this.ragdoll.muscleScale = held ? 0.0 : 1.0;   // open up (re-engage) on release => catch the landing
       if (held) this._addSpin(TUCK_SPIN * sdt);
       this.audio.tuck(held && this.spin !== 0 ? 1 : 0);
+      // accumulate body rotation (head-relative-to-pelvis angle) for a flip bonus
+      const hd = this.ragdoll.byName['head'].pos, pl = this.ragdoll.byName['pelvis'].pos;
+      const ang = Math.atan2(hd.y - pl.y, hd.x - pl.x);
+      if (this._lastBodyAng !== null) {
+        let da = ang - this._lastBodyAng;
+        while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
+        this.flipAccum += Math.abs(da);
+      }
+      this._lastBodyAng = ang;
+    } else if (this.phase === 'landed') {
+      // brief beat to read the STICK, then bound back into the air for the chain
+      this.landTimer = (this.landTimer || 0) + dt;
+      if (this.landTimer > 0.16 && !this.over) { this.phase = 'flying'; this.airTime = 0; this.hud.setPhase('flying'); }
     }
 
     // physics substeps (skip while purely 'ready'/'winding' so it stands calm)
@@ -259,6 +272,7 @@ export class Game {
       p.prev.y = p.pos.y - vy * (1 / 120);
     }
     this.phase = 'flying'; this.launched = true; this.airTime = 0; this.power = 0;
+    this.flipAccum = 0; this._lastBodyAng = null;       // track rotations this flight
     this.hud.setPower(0); this.hud.setPhase('flying');
     this.audio.launch(); this._shake(0.3); this._burst(this.ragdoll.byName['pelvis'].pos, 0xffffff, 12);
   }
@@ -283,23 +297,49 @@ export class Game {
     const onGround = ft < 0.25;
     if (this.airTime < 0.25 || !onGround) return;   // ignore the very first frames
 
-    // upright = head clearly above pelvis above feet
-    const upright = head > pelY + 0.35 && pelY > ft + 0.4;
+    // --- landing QUALITY, not a binary. This is the skill gradient. ---
+    // uprightness: how vertical the torso is (head over pelvis over feet).
+    const torsoUp = (head - pelY) / 0.55;                 // ~1 when fully upright
+    const stance = (pelY - ft) / 0.55;
+    const uprightQ = clamp(Math.min(torsoUp, stance), 0, 1);
     const vy = this._pelvisVel().y;
+    const softQ = clamp(1 + vy / 0.5, 0, 1);              // 1 = gentle, 0 = slammed
+    // TIMING is the skill: if the player is still TUCKING (curled, muscles off)
+    // at the moment of contact, they can't plant their feet => they flop. You
+    // must release the tuck just before landing. This makes flip-timing matter.
+    if (this.tucking) { return this._die(); }
+    const landQ = uprightQ * (0.5 + 0.5 * softQ);         // 0..1 overall quality
 
-    if (upright && vy > -0.18) {
-      // STICK! muscles caught it. keep momentum (+boost), score a combo, run on.
-      this.phase = 'landed';
+    if (uprightQ > 0.35) {
+      // STICK! quality scales the reward — clean feet-first landings pay far more.
+      this.phase = 'landed'; this.landTimer = 0;
       this.sticks++; this.combo++;
-      const vx = Math.abs(this._pelvisVel().x) / dt;
-      // re-launch a smaller hop forward to chain distance (a "run on")
-      const boost = STICK_BOOST + this.combo * 0.04;
-      for (const p of this.ragdoll.P) { p.prev.x = p.pos.x - (this._pelvisVel().x) * boost; }
-      this.audio.stick(this.combo); this._burst(this.ragdoll.byName['ftL'].pos, 0xffd23a, 18);
-      this._shake(0.35); this.slowmo = 0.35; this.hud.flash(this.combo > 1 ? 'STICK ×' + this.combo + '!' : 'STICK!');
-      this.hud.setCombo(this.combo); this.hud.setPhase('landed');
-      // after a brief moment, allow another flight if still moving fast
-      setTimeout(() => { if (this.phase === 'landed' && !this.over) { this.phase = 'flying'; this.airTime = 0; } }, 260);
+      // tiered feedback so the player feels the skill ceiling
+      let tier = 'STICK';
+      if (landQ > 0.82) tier = 'PERFECT';
+      else if (landQ > 0.6) tier = 'CLEAN';
+      this.lastTier = tier;
+      // RE-LAUNCH into the next hop: convert kept horizontal speed into a fresh
+      // forward+up bound. Quality + combo compound the speed => skilled chains
+      // travel dramatically further (the addictive mastery curve).
+      const fwd = Math.abs(this._pelvisVel().x) / (1 / 60);          // current speed (u/s)
+      const keep = 0.80 + landQ * 0.22 + Math.min(this.combo, 8) * 0.015;
+      const newSpeed = Math.max(8, fwd * keep);
+      const hopAng = 0.5;                                            // a flat, fast bound
+      const nvx = Math.cos(hopAng) * newSpeed, nvy = Math.sin(hopAng) * newSpeed;
+      for (const p of this.ragdoll.P) { p.prev.x = p.pos.x - nvx * (1 / 120); p.prev.y = p.pos.y - nvy * (1 / 120); }
+      // FLIP BONUS — whole rotations landed this flight. This is what makes the
+      // tuck/flip skill pay off: a triple-flip stick scores far above a flat hop.
+      const flips = Math.floor(this.flipAccum / (Math.PI * 2));
+      if (flips >= 1) { this.dist += flips * 8 * (tier === 'PERFECT' ? 1.6 : 1); this.hud.flash(flips + (flips > 1 ? ' FLIPS!' : ' FLIP!')); }
+      this.flipAccum = 0; this._lastBodyAng = null;
+      // small flat quality bonus so a clean landing always nudges the score
+      this.dist += Math.round(landQ * 4 + (tier === 'PERFECT' ? 5 : 0));
+      this.audio.stick(this.combo + flips + (tier === 'PERFECT' ? 4 : 0));
+      this._burst(this.ragdoll.byName['ftL'].pos, tier === 'PERFECT' ? 0x6affd0 : 0xffd23a, tier === 'PERFECT' ? 26 : 16);
+      this._shake(0.3 + landQ * 0.2); this.slowmo = tier === 'PERFECT' ? 0.28 : 0.4;
+      const label = (tier === 'STICK' ? 'STICK' : tier) + (this.combo > 1 ? ' ×' + this.combo : '') + (tier === 'PERFECT' ? '!' : '');
+      this.hud.flash(label); this.hud.setCombo(this.combo); this.hud.setPhase('landed');
     } else if (head < 0.5 || pelY < 0.45) {
       // FACEPLANT — comedy flop, run ends
       this._die();
