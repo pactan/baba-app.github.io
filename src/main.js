@@ -1,74 +1,46 @@
-import { Game } from './game.js?v=22';
-import { Input } from './input.js?v=22';
-import { Audio } from './audio.js?v=22';
+import { Game } from './game.js?v=23';
+import { Input } from './input.js?v=23';
+import { Audio } from './audio.js?v=23';
 
 const $ = (id) => document.getElementById(id);
-
-let lastShots = -1, lastBest = -1, lastPow = -1, lastLevel = '', lastGoal = '';
+let lastDist = -1, lastBest = -1, lastCombo = -1, lastPow = -1, lastPhase = '';
 const hud = {
-  setShots(v) { if (v !== lastShots) { lastShots = v; $('shots').textContent = v; } },
-  setBest(v) { if (v !== lastBest) { lastBest = v; } },
-  setPower(v) {
-    const pct = Math.round(v * 100);
-    if (pct !== lastPow) { lastPow = pct; $('power-fill').style.height = pct + '%';
-      $('power-btn').classList.toggle('hot', v > 0.8); }
+  setDist(v) { if (v !== lastDist) { lastDist = v; const el = $('dist'); el.firstChild.textContent = v; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); } },
+  setBest(v) { if (v !== lastBest) { lastBest = v; $('best').textContent = v; } },
+  setCombo(c) { if (c === lastCombo) return; lastCombo = c; const el = $('combo'); el.textContent = c >= 2 ? c + '× COMBO' : ''; el.classList.toggle('on', c >= 2); },
+  setPower(v) { if (Math.round(v * 100) === lastPow) return; lastPow = Math.round(v * 100); $('power-fill').style.width = lastPow + '%'; $('power-wrap').classList.toggle('on', v > 0.001); },
+  setPhase(p) {
+    if (p === lastPhase) return; lastPhase = p;
+    const h = $('hint');
+    h.textContent = p === 'ready' ? 'HOLD to wind up · release to launch'
+      : p === 'flying' ? 'HOLD to tuck & flip · release to land feet-first'
+      : p === 'landed' ? 'STICK! keep going…' : '';
+    h.style.opacity = (p === 'ready' || p === 'flying') ? '1' : '0';
   },
-  setLevel(n, total, name) {
-    const k = n + '/' + total;
-    if (k !== lastLevel) { lastLevel = k; $('level').textContent = k; $('levelname').textContent = name; }
-  },
-  setGoal(g) {
-    if (g === lastGoal) return; lastGoal = g;
-    $('goal').textContent = g === 'topple' ? 'KNOCK IT OFF THE LEDGE' : 'KNOCK IT OUT';
-  },
-  setReticle(x, y) {
-    const el = $('reticle');
-    el.style.left = (x * 100) + '%'; el.style.top = ((1 - y) * 100) + '%';
-  },
-  flash(text) {
-    const el = $('flash'); el.textContent = text;
-    el.classList.remove('on'); void el.offsetWidth; el.classList.add('on');
-  },
-  showResult(score, best, isRecord, shots, level, total) {
-    $('result-score').textContent = score;
-    $('result-sub').textContent = shots + ' ARROW' + (shots === 1 ? '' : 'S') + ' · SCORE';
-    $('result-best').textContent = 'Best ' + best;
-    const badge = $('result-badge');
-    badge.textContent = isRecord && score > 0 ? 'NEW BEST!' : 'CLEARED!';
-    badge.classList.toggle('record', isRecord && score > 0);
-    $('btn-next').textContent = level >= total ? 'LEVEL 1' : 'NEXT LEVEL';
+  flash(t) { const el = $('flash'); el.textContent = t; el.classList.remove('on'); void el.offsetWidth; el.classList.add('on'); },
+  showResult(score, best, isRecord, sticks, combo) {
+    $('result-score').firstChild.textContent = score;
+    $('result-line').textContent = sticks + (sticks === 1 ? ' stick' : ' sticks') + (combo > 1 ? ' · best ×' + combo : '');
+    $('result-best').textContent = 'Best ' + best + 'm';
+    const b = $('result-badge'); b.textContent = isRecord && score > 0 ? 'NEW BEST!' : (score >= 60 ? 'HUGE!' : score >= 25 ? 'NICE!' : 'OOF');
+    b.classList.toggle('record', isRecord && score > 0);
     $('result').classList.remove('hidden');
   },
   hideResult() { $('result').classList.add('hidden'); },
 };
 
-function showError(e) {
-  const s = $('start'); s.classList.remove('hidden');
-  $('err').textContent = 'Error: ' + (e && (e.message || e)) + (e && e.stack ? '\n' + e.stack.split('\n').slice(0, 3).join('\n') : '');
-}
+function showError(e) { const s = $('start'); s.classList.remove('hidden'); $('err').textContent = 'Error: ' + (e && (e.message || e)) + (e && e.stack ? '\n' + e.stack.split('\n').slice(0, 3).join('\n') : ''); }
 addEventListener('error', (ev) => showError(ev.error || ev.message));
 addEventListener('unhandledrejection', (ev) => showError(ev.reason));
 
 let audio, input, game, started = false;
 try { audio = new Audio(); input = new Input(); } catch (e) { showError(e); }
-
 function begin() {
-  if (started) return;
-  started = true;
+  if (started) return; started = true;
   try { audio.start(); } catch (e) {}
-  try {
-    game = new Game($('scene'), audio, input, hud);
-    window.__game = game;
-    game.onError = showError;
-    document.body.classList.add('playing');
-    $('start').classList.add('hidden');
-    game.start();
-  } catch (e) { started = false; showError(e); }
+  try { game = new Game($('scene'), audio, input, hud); window.__game = game; game.onError = showError; document.body.classList.add('playing'); $('start').classList.add('hidden'); game.start(); }
+  catch (e) { started = false; showError(e); }
 }
-
-const startEl = $('start');
-startEl.addEventListener('pointerdown', begin);
-addEventListener('keydown', (e) => { if ((e.key === 'Enter') && !started) begin(); });
-
+$('start').addEventListener('pointerdown', begin);
+addEventListener('keydown', (e) => { if (e.key === 'Enter' && !started) begin(); });
 $('btn-again').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); if (game) game.restart(); });
-$('btn-next').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); if (game) game.nextLevel(); });
