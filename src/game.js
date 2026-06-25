@@ -325,9 +325,11 @@ export class Game {
     const ftL = this.ragdoll.byName['ftL'].pos, ftR = this.ragdoll.byName['ftR'].pos;
     const head = this.ragdoll.byName['head'].pos.y, pelY = this.ragdoll.byName['pelvis'].pos.y;
     const ft = (ftL.y + ftR.y) * 0.5;
-    // contact = the lowest body point touches down (so we judge at true impact)
-    const lowest = Math.min(ft, pelY, head);
-    if (this.airTime < 0.22 || lowest > 0.3) return;
+    // contact = feet OR pelvis near the ground (the parts that bear a landing).
+    // Using feet+pelvis (not every particle) avoids a dangling arm triggering a
+    // false early landing, while still catching a body-first impact.
+    const lowest = Math.min(ft, pelY);
+    if (this.airTime < 0.22 || lowest > 0.32) return;
 
     // quality from verticality at impact (timing-driven) × softness
     const vert = this._verticality();
