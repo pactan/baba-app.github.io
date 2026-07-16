@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#05010f" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Cube Drift</title>
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- No build step: dependencies are pulled straight from a CDN via an import map.
+       This keeps the project deployable to GitHub Pages with zero tooling. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+      "@dimforge/rapier3d-compat": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/rapier.es.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div id="score-wrap">
+      <div id="score">0</div>
+      <div id="speed">0 <span>km/h</span></div>
+    </div>
+  </div>
+
+  <!-- Start menu -->
+  <div id="menu">
+    <div class="menu-inner">
+      <h1 class="logo">CUBE<span>DRIFT</span></h1>
+      <p class="best">BEST <b id="menu-best">0</b></p>
+      <button id="start-btn" class="pulse">TAP TO START</button>
+      <p class="hint">Tap to turn&nbsp;·&nbsp;Hold to drift</p>
+    </div>
+  </div>
+
+  <!-- Game over -->
+  <div id="gameover" class="hidden">
+    <div class="menu-inner">
+      <p class="go-label">WIPEOUT</p>
+      <div id="go-score">0</div>
+      <p class="go-sub"><span id="go-best-label">BEST</span> <b id="go-best">0</b></p>
+      <button id="retry-btn" class="pulse">RETRY</button>
+      <p class="hint">Tap anywhere to retry</p>
+    </div>
+  </div>
+
+  <div id="flash"></div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
